@@ -404,14 +404,15 @@ body:before{
     overflow:auto;
     background:
       radial-gradient(700px 420px at 25% 20%, rgba(255,255,255,.12), transparent 55%),
-      linear-gradient(135deg,var(--android-bg1),var(--android-bg2));
+      linear-gradient(135deg,var(--android-bg1),var(--android-bg2)),
+      url("./assets/mobile-wallpaper.png") center/cover no-repeat fixed;
     color:var(--android-text);
   }
   body:before{opacity:.15}
 
   .desktop{
     padding:12px;
-    padding-top:44px; /* statusbar */
+    padding-top:44px; /* statusbar area (includes spacing) */
     padding-bottom:62px; /* navbar */
     overflow:auto;
   }

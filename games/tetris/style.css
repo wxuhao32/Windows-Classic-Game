@@ -242,3 +242,80 @@ body { overflow-x: hidden; }
   .brandText .sub{ display:none; }
   .foot{ display:none; }
 }
+
+
+/* ===== Mobile fit override (lobby integration) =====
+   Goal: keep board + next + touch controls visible without scrolling.
+   This only affects small screens.
+*/
+@media (max-width: 720px){
+  html, body{ height:100%; overflow:hidden; }
+  body{ overflow:hidden; }
+
+  /* Make app fill viewport and manage layout internally */
+  #app{
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    margin:0 auto;
+    padding:0 8px 8px;
+  }
+
+  .topbar{ flex:0 0 auto; }
+
+  .layout{
+    flex:1 1 auto;
+    display:grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+    gap:8px;
+    overflow:hidden;
+    margin-top: 8px;
+  }
+
+  /* Put "Next + Stats" on top as a compact row */
+  .side{
+    order:0;
+    display:grid;
+    grid-template-columns: 140px 1fr;
+    gap:8px;
+  }
+  .side .panel{ padding:6px; }
+  #next{
+    width:100%;
+    max-width:140px;
+    margin:0 auto;
+  }
+  .panelTitle{ font-size:11px; margin-bottom:4px; }
+
+  .panel.stats .statRow{ padding:3px 0; font-size:12px; }
+
+  /* Board in the middle, centered */
+  .gameArea{
+    order:1;
+    padding:6px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+  }
+  #board{
+    width: min(100%, 360px);
+    max-height: 100%;
+  }
+
+  /* Touch controls at bottom */
+  .touch{
+    order:2;
+    padding:8px;
+    gap:6px;
+  }
+  .tbtn{ padding:10px 6px; font-size:14px; }
+  .tbtn.wide{ font-size:13px; }
+}
+
+/* Ultra short viewports: shrink board a bit more */
+@media (max-width: 720px) and (max-height: 640px){
+  #board{ width: min(100%, 320px); }
+  .tbtn{ padding:9px 6px; font-size:13px; }
+}
