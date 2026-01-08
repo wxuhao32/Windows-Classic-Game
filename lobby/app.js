@@ -1,19 +1,5 @@
 (() => {
   const desktop = document.getElementById("desktop");
-  // Mobile wallpaper cache-buster: ensure replaced PNG shows up even with aggressive CDN caching
-  // Put your PNG at: lobby/assets/mobile-wallpaper.png
-  function applyMobileWallpaper(){
-    try{
-      if (window.matchMedia && window.matchMedia("(max-width: 820px)").matches) {
-        const ts = Date.now();
-        desktop.style.setProperty("--mobile-wallpaper", `url("./assets/mobile-wallpaper.png?v=${ts}")`);
-      } else {
-        desktop.style.removeProperty("--mobile-wallpaper");
-      }
-    } catch (e) {}
-  }
-  applyMobileWallpaper();
-  window.addEventListener("resize", applyMobileWallpaper, { passive: true });
   const windowsLayer = document.getElementById("windows");
   const icons = Array.from(document.querySelectorAll(".icon"));
   const taskbarTasks = document.getElementById("taskbarTasks");
@@ -29,6 +15,7 @@
     "minesweeper": { title: "扫雷", src: "../games/minesweeper/index.html", icon: "./assets/icon-minesweeper.svg" },
     "snake": { title: "贪吃蛇", src: "../games/snake/index.html", icon: "./assets/icon-snake.svg" },
     "tetris": { title: "俄罗斯方块", src: "../games/tetris/index.html", icon: "./assets/icon-tetris.svg" },
+    "solitaire": { title: "纸牌接龙", src: "../games/solitaire/index.html", icon: "./assets/icon-solitaire.svg" },
   };
 
   let topZ = 10;

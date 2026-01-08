@@ -402,25 +402,16 @@ body:before{
 @media (max-width: 820px){
   body{
     overflow:auto;
-    /* Fallback base behind wallpaper */
-    background: linear-gradient(135deg,var(--android-bg1),var(--android-bg2));
+    background:
+      radial-gradient(700px 420px at 25% 20%, rgba(255,255,255,.12), transparent 55%),
+      linear-gradient(135deg,var(--android-bg1),var(--android-bg2));
     color:var(--android-text);
   }
   body:before{opacity:.15}
 
   .desktop{
-    /* Custom mobile wallpaper (replace lobby/assets/mobile-wallpaper.png) */
-    background-image:
-      radial-gradient(700px 420px at 25% 20%, rgba(255,255,255,.10), transparent 55%),
-      linear-gradient(135deg, rgba(26,35,126,.55), rgba(13,71,161,.55)),
-      var(--mobile-wallpaper, url("./assets/mobile-wallpaper.png"));
-    background-size: auto, auto, cover;
-    background-position: center, center, center;
-    background-repeat: no-repeat, no-repeat, no-repeat;
-    background-attachment: scroll, scroll, scroll;
-
     padding:12px;
-    padding-top:44px; /* statusbar area (includes spacing) */
+    padding-top:44px; /* statusbar */
     padding-bottom:62px; /* navbar */
     overflow:auto;
   }
