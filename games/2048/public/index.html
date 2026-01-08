@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#e7e7e7" />
+  <title>复古 2048</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="title-block">
+        <h1 class="title">2048</h1>
+        <div class="subtitle">复古风 · 手机竖屏优先 · 触屏 + 键盘</div>
+      </div>
+
+      <div class="hud">
+        <div class="scorebox" aria-label="当前分数">
+          <div class="label">SCORE</div>
+          <div id="score" class="value">0</div>
+        </div>
+        <div class="scorebox" aria-label="最高分">
+          <div class="label">BEST</div>
+          <div id="best" class="value">0</div>
+        </div>
+      </div>
+    </header>
+
+    <section class="controls" aria-label="游戏控制">
+      <button id="btn-new" class="btn primary" type="button">重新开始</button>
+      <button id="btn-undo" class="btn" type="button" disabled>撤销一步</button>
+      <button id="btn-theme" class="btn" type="button">主题：亮</button>
+      <button id="btn-audio" class="btn" type="button">音效：开</button>
+    </section>
+
+    <main class="game">
+      <div class="board-wrap">
+        <div id="board" class="board" role="application" aria-label="2048 棋盘（在此滑动）" tabindex="0">
+          <div id="grid" class="grid" aria-hidden="true"></div>
+          <div id="tiles" class="tiles" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="tips">
+        操作：键盘方向键 / WASD，或在棋盘上滑动（手机触屏）。
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>Retro 2048 · WebAudio 音效 · Node.js + Express 静态服务</span>
+    </footer>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-window">
+      <div class="modal-titlebar">
+        <div id="modal-title" class="modal-title">提示</div>
+        <button id="modal-close" class="win-btn" type="button" aria-label="关闭">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-primary" class="btn primary" type="button">继续</button>
+        <button id="modal-secondary" class="btn" type="button">重新开始</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

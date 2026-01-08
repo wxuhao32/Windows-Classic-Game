@@ -1,0 +1,574 @@
+/* =========================================================
+   Lobby Theme v2
+   - Desktop: Windows 98-ish desktop + taskbar
+   - Mobile: Android home screen chrome + full-screen app frame
+   ========================================================= */
+
+:root{
+  /* Desktop (Windows) */
+  --desk-bg:#0b7a7a;
+  --desk-bg2:#0a5f6b;
+
+  --win-face:#c0c0c0;
+  --win-shadow:#808080;
+  --win-dark:#404040;
+  --win-light:#ffffff;
+
+  --titlebar1:#000080;
+  --titlebar2:#1084d0;
+  --titlebar-text:#ffffff;
+
+  --select:#000080;
+  --select-text:#ffffff;
+
+  --text:#111;
+  --font: Tahoma, "MS Sans Serif", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  /* Android (Mobile) */
+  --android-bg1:#1a237e;
+  --android-bg2:#0d47a1;
+  --android-surface: rgba(20,20,20,.45);
+  --android-text: #fff;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  overflow:hidden;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  background: radial-gradient(1200px 600px at 30% 20%, rgba(255,255,255,.06), transparent 55%),
+              linear-gradient(135deg,var(--desk-bg),var(--desk-bg2));
+}
+
+/* subtle retro pixel noise overlay */
+body:before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.04), rgba(255,255,255,.04) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.03), rgba(0,0,0,.03) 1px, transparent 1px, transparent 4px);
+  mix-blend-mode:overlay;
+  opacity:.25;
+}
+
+.desktop{
+  position:relative;
+  width:100%;
+  height:100%;
+  padding:16px;
+}
+
+/* =========================================================
+   Desktop icons (Windows)
+   ========================================================= */
+.desktop__icons{
+  position:absolute;
+  top:16px;
+  left:16px;
+  display:grid;
+  gap:10px;
+  grid-auto-rows:min-content;
+}
+
+.icon{
+  width:92px;
+  padding:8px 6px;
+  border:1px solid transparent;
+  background:transparent;
+  color:#fff;
+  text-shadow:0 1px 0 rgba(0,0,0,.35);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  cursor:default;
+}
+
+.icon__img{
+  width:48px;
+  height:48px;
+  image-rendering:pixelated;
+}
+
+.icon__label{
+  font-size:13px;
+  line-height:1.1;
+  text-align:center;
+  padding:2px 6px;
+  border:1px solid transparent;
+  max-width:100%;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.icon.is-selected{
+  border-color:rgba(255,255,255,.25);
+}
+.icon.is-selected .icon__label{
+  border-color:rgba(0,0,0,.15);
+  background:var(--select);
+  color:var(--select-text);
+  text-shadow:none;
+  outline:1px dotted rgba(255,255,255,.75);
+  outline-offset:-3px;
+}
+
+/* =========================================================
+   Windows layer / windows
+   ========================================================= */
+.windows{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+.window{
+  position:absolute;
+  width:min(960px, calc(100vw - 60px));
+  height:min(680px, calc(100vh - 120px));
+  left:160px;
+  top:76px;
+  background:var(--win-face);
+
+  /* classic raised border */
+  border-top:2px solid var(--win-light);
+  border-left:2px solid var(--win-light);
+  border-right:2px solid var(--win-dark);
+  border-bottom:2px solid var(--win-dark);
+
+  box-shadow: 0 0 0 1px #000, 8px 10px 0 rgba(0,0,0,.22);
+  pointer-events:auto;
+}
+
+.window.is-front{
+  box-shadow: 0 0 0 1px #000, 10px 12px 0 rgba(0,0,0,.26);
+}
+
+/* Titlebar: Win98-ish gradient */
+.titlebar{
+  height:30px;
+  background:linear-gradient(90deg, var(--titlebar1), var(--titlebar2));
+  color:var(--titlebar-text);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:3px 3px 3px 6px;
+
+  border-top:1px solid rgba(255,255,255,.18);
+  border-left:1px solid rgba(255,255,255,.18);
+  border-right:1px solid rgba(0,0,0,.35);
+  border-bottom:1px solid rgba(0,0,0,.35);
+
+  cursor:grab;
+}
+.window.dragging .titlebar{cursor:grabbing}
+
+.titlebar__left{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.titlebar__icon{
+  width:16px;
+  height:16px;
+}
+.titlebar__title{
+  font-size:13px;
+  font-weight:700;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.titlebar__btns{
+  display:flex;
+  gap:2px;
+}
+
+.winbtn{
+  width:24px;
+  height:22px;
+  background:var(--win-face);
+  border-top:2px solid var(--win-light);
+  border-left:2px solid var(--win-light);
+  border-right:2px solid var(--win-dark);
+  border-bottom:2px solid var(--win-dark);
+  display:grid;
+  place-items:center;
+  cursor:default;
+}
+.winbtn:active{
+  border-top:2px solid var(--win-dark);
+  border-left:2px solid var(--win-dark);
+  border-right:2px solid var(--win-light);
+  border-bottom:2px solid var(--win-light);
+}
+
+.glyph{
+  width:12px;
+  height:12px;
+  position:relative;
+}
+
+.glyph--min:before{
+  content:"";
+  position:absolute;
+  left:1px; right:1px; bottom:1px;
+  height:2px;
+  background:#111;
+}
+.glyph--max:before{
+  content:"";
+  position:absolute;
+  left:1px; top:1px; right:1px; bottom:1px;
+  border:2px solid #111;
+}
+.glyph--close:before,.glyph--close:after{
+  content:"";
+  position:absolute;
+  left:5px;
+  top:-1px;
+  width:2px;
+  height:14px;
+  background:#111;
+}
+.glyph--close:before{transform:rotate(45deg)}
+.glyph--close:after{transform:rotate(-45deg)}
+
+.window__content{
+  height:calc(100% - 30px);
+  background:#000;
+  border-top:2px solid var(--win-shadow);
+  border-left:2px solid var(--win-shadow);
+  border-right:2px solid var(--win-light);
+  border-bottom:2px solid var(--win-light);
+}
+
+.window__iframe{
+  width:100%;
+  height:100%;
+  border:0;
+  background:#000;
+}
+
+/* =========================================================
+   Taskbar (Windows)
+   ========================================================= */
+.taskbar{
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  height:44px;
+  background:var(--win-face);
+
+  border-top:2px solid var(--win-light);
+  border-left:2px solid var(--win-light);
+  border-right:2px solid var(--win-dark);
+  border-bottom:2px solid var(--win-dark);
+
+  box-shadow: 0 -1px 0 #000;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px;
+}
+
+.startbtn{
+  height:32px;
+  padding:0 12px 0 10px;
+  background:var(--win-face);
+  border-top:2px solid var(--win-light);
+  border-left:2px solid var(--win-light);
+  border-right:2px solid var(--win-dark);
+  border-bottom:2px solid var(--win-dark);
+  font-weight:700;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:default;
+}
+.startbtn:active{
+  border-top:2px solid var(--win-dark);
+  border-left:2px solid var(--win-dark);
+  border-right:2px solid var(--win-light);
+  border-bottom:2px solid var(--win-light);
+}
+
+.winlogo{
+  width:16px;
+  height:16px;
+  background:
+    linear-gradient(#e53935,#e53935) 0 0/7px 7px,
+    linear-gradient(#43a047,#43a047) 9px 0/7px 7px,
+    linear-gradient(#1e88e5,#1e88e5) 0 9px/7px 7px,
+    linear-gradient(#fdd835,#fdd835) 9px 9px/7px 7px;
+  background-repeat:no-repeat;
+  border:1px solid rgba(0,0,0,.35);
+}
+
+.taskbar__tasks{
+  flex:1;
+  display:flex;
+  gap:6px;
+  min-width:0;
+  overflow:hidden;
+}
+
+.taskbtn{
+  height:32px;
+  max-width:260px;
+  padding:0 10px 0 8px;
+  background:var(--win-face);
+  border-top:2px solid var(--win-light);
+  border-left:2px solid var(--win-light);
+  border-right:2px solid var(--win-dark);
+  border-bottom:2px solid var(--win-dark);
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:default;
+  min-width:140px;
+}
+.taskbtn:active,
+.taskbtn.is-active{
+  border-top:2px solid var(--win-dark);
+  border-left:2px solid var(--win-dark);
+  border-right:2px solid var(--win-light);
+  border-bottom:2px solid var(--win-light);
+  background:#d6d6d6;
+}
+.taskbtn__icon{width:16px;height:16px;flex:0 0 auto}
+.taskbtn__text{
+  font-size:13px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.taskbar__tray{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding-left:8px;
+  height:32px;
+  border-top:2px solid var(--win-shadow);
+  border-left:2px solid var(--win-shadow);
+  border-right:2px solid var(--win-light);
+  border-bottom:2px solid var(--win-light);
+}
+.tray__divider{width:1px;height:18px;background:#777}
+.tray__clock{font-size:13px}
+
+/* Hint bubble */
+.hint{
+  position:absolute;
+  right:16px;
+  bottom:62px;
+  max-width:min(460px, 92vw);
+  opacity:.92;
+}
+.hint__card{
+  background:rgba(0,0,0,.25);
+  border:1px solid rgba(255,255,255,.25);
+  padding:10px 12px;
+  color:#fff;
+  border-radius:10px;
+  backdrop-filter: blur(6px);
+}
+.hint__title{font-weight:700; margin-bottom:4px}
+.hint__text{font-size:13px; line-height:1.35}
+
+/* =========================================================
+   Android chrome (hidden on desktop by default)
+   ========================================================= */
+.android-statusbar,
+.android-navbar{
+  display:none;
+}
+
+/* =========================================================
+   Mobile: Android-style home + full-screen app frame
+   ========================================================= */
+@media (max-width: 820px){
+  body{
+    overflow:auto;
+    background:
+      radial-gradient(700px 420px at 25% 20%, rgba(255,255,255,.12), transparent 55%),
+      linear-gradient(135deg,var(--android-bg1),var(--android-bg2));
+    color:var(--android-text);
+  }
+  body:before{opacity:.15}
+
+  .desktop{
+    padding:12px;
+    padding-top:44px; /* statusbar */
+    padding-bottom:62px; /* navbar */
+    overflow:auto;
+  }
+
+  .android-statusbar{
+    display:flex;
+    position:fixed;
+    left:0; right:0; top:0;
+    height:36px;
+    padding:0 12px;
+    align-items:center;
+    justify-content:space-between;
+    background:rgba(0,0,0,.15);
+    backdrop-filter: blur(8px);
+    z-index:9999;
+    pointer-events:none;
+  }
+  .android-statusbar__time{font-weight:700; font-size:13px}
+  .android-statusbar__right{display:flex; gap:8px; align-items:center}
+
+  .android-ic{
+    width:16px; height:16px; display:inline-block;
+    background:rgba(255,255,255,.85);
+    mask-size:contain; mask-repeat:no-repeat; mask-position:center;
+    -webkit-mask-size:contain; -webkit-mask-repeat:no-repeat; -webkit-mask-position:center;
+    opacity:.9;
+  }
+  .android-ic--signal{mask-image:linear-gradient(#000,#000); border-radius:2px; clip-path: polygon(0 70%, 15% 70%, 15% 55%, 30% 55%, 30% 40%, 45% 40%, 45% 25%, 60% 25%, 60% 10%, 75% 10%, 75% 0, 100% 0, 100% 100%, 0 100%);}
+  .android-ic--wifi{border-radius:50%; clip-path: polygon(0 0,100% 0,50% 70%); }
+  .android-ic--battery{border-radius:2px; position:relative; clip-path: inset(0 0 0 0); }
+  .android-ic--battery:after{
+    content:""; position:absolute; right:-3px; top:5px; width:3px; height:6px; background:rgba(255,255,255,.85);
+  }
+
+  .android-navbar{
+    display:flex;
+    position:fixed;
+    left:0; right:0; bottom:0;
+    height:52px;
+    align-items:center;
+    justify-content:center;
+    gap:40px;
+    background:rgba(0,0,0,.18);
+    backdrop-filter: blur(8px);
+    z-index:9999;
+    pointer-events: auto;
+  }
+
+  .android-navbtn{
+    width:44px;
+    height:44px;
+    border:0;
+    background:transparent;
+    display:grid;
+    place-items:center;
+    padding:0;
+    border-radius:14px;
+    cursor:default;
+  }
+  .android-navbtn:active{
+    background:rgba(255,255,255,.10);
+  }
+  .android-nav{width:18px;height:18px;opacity:.85; background:rgba(255,255,255,.85)}
+  .android-nav--recents{border-radius:3px}
+  .android-nav--home{border-radius:50%}
+  .android-nav--back{clip-path: polygon(70% 0, 25% 50%, 70% 100%, 70% 72%, 45% 50%, 70% 28%); border-radius:2px}
+
+  /* Icons: android grid */
+  .desktop__icons{
+    position:relative;
+    top:auto; left:auto;
+    display:grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap:12px 10px;
+    margin: 8px auto 18px;
+    width:min(560px, 100%);
+  }
+  .icon{
+    width:100%;
+    padding:10px 6px;
+    text-shadow:none;
+    border:0;
+    background:transparent;
+  }
+  .icon__img{
+    width:52px;
+    height:52px;
+    filter: drop-shadow(0 10px 12px rgba(0,0,0,.25));
+  }
+  .icon__label{
+    font-size:12px;
+    padding:4px 6px 2px;
+    border:0;
+    background:transparent;
+    color:rgba(255,255,255,.92);
+  }
+  .icon.is-selected .icon__label{
+    outline:none;
+    background:rgba(255,255,255,.14);
+    border-radius:10px;
+  }
+
+  /* Windows chrome hidden on mobile */
+  .taskbar{display:none}
+  .hint{display:none}
+
+  /* Fullscreen app frame */
+  .windows{position:fixed; inset:0}
+  .window{
+    left:0 !important;
+    top:0 !important;
+    width:100vw !important;
+    height:calc(100vh - 52px) !important;
+    border-radius:0;
+    box-shadow:none;
+
+    border:0;
+    background:rgba(0,0,0,.1);
+  }
+  .titlebar{
+    height:52px;
+    background:rgba(0,0,0,.25);
+    border:0;
+    cursor:default;
+    padding:0 12px;
+    backdrop-filter: blur(10px);
+  }
+  .titlebar__title{font-weight:700}
+  .titlebar__btns .winbtn{display:none}
+
+  .android-appbtn{
+    width:38px;height:38px;
+    border-radius:19px;
+    background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.18);
+    display:grid;
+    place-items:center;
+    cursor:default;
+  }
+  .android-appbtn:active{transform:scale(.98)}
+  .android-back{
+    width:0;height:0;
+    border-top:7px solid transparent;
+    border-bottom:7px solid transparent;
+    border-right:10px solid rgba(255,255,255,.9);
+    margin-left:2px;
+  }
+
+  .window__content{
+    height:calc(100% - 52px);
+    border:0;
+    background:#000;
+  }
+}
+
+/* Respect safe area on iOS */
+@supports(padding: max(0px)){
+  .desktop{
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}

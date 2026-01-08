@@ -1,0 +1,16 @@
+{
+  "name": "snake-arcade",
+  "version": "1.0.0",
+  "description": "Retro pixel Snake web game (Node.js + Express, vanilla HTML/CSS/JS).",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

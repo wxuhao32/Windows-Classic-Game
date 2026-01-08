@@ -1,0 +1,17 @@
+{
+  "name": "retro-2048",
+  "version": "1.0.0",
+  "description": "A retro-styled 2048 game for mobile and desktop (touch + keyboard), served by Node.js + Express.",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}

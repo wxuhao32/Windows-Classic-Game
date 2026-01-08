@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>复古俄罗斯方块 · 手感版</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" aria-hidden="true"></span>
+        <div class="brandText">
+          <div class="title">复古俄罗斯方块</div>
+          <div class="sub">手感优先 · 克制细节</div>
+        </div>
+      </div>
+
+      <div class="btns">
+        <button id="btnSound" class="btn" aria-pressed="true" title="M">音效：开</button>
+                <button id="btnMusic" class="btn" aria-pressed="false" title="B">音乐：关</button>
+        <button id="btnFullscreen" class="btn" aria-pressed="false" title="F">全屏</button>
+<button id="btnPause" class="btn" aria-pressed="false" title="P">暂停</button>
+        <button id="btnRestart" class="btn" title="R">重开</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="gameArea">
+        <canvas id="board" aria-label="俄罗斯方块棋盘"></canvas>
+        <div id="overlay" class="overlay hidden" aria-hidden="true">
+          <div class="overlayBox">
+            <div id="overlayTitle" class="overlayTitle">暂停</div>
+            <div id="overlayHint" class="overlayHint">按 P 继续</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="touchControls" class="touch hidden" aria-label="触控按键">
+        <button class="tbtn" data-act="left" aria-label="左">◀</button>
+        <button class="tbtn" data-act="right" aria-label="右">▶</button>
+        <button class="tbtn" data-act="rotCCW" aria-label="逆时针旋转">⟲</button>
+        <button class="tbtn" data-act="rotCW" aria-label="顺时针旋转">⟳</button>
+        <button class="tbtn wide" data-act="soft" aria-label="软降">软降</button>
+        <button class="tbtn wide" data-act="hard" aria-label="硬降">硬降</button>
+      </div>
+
+      <aside class="side">
+        <section class="panel">
+          <div class="panelTitle">下一个</div>
+          <canvas id="next" aria-label="下一个方块预览"></canvas>
+        </section>
+
+        <section class="panel stats">
+          <div class="panelTitle">信息</div>
+          <div class="statRow"><span class="k">分数</span><span id="uiScore" class="v">0</span></div>
+          <div class="statRow"><span class="k">等级</span><span id="uiLevel" class="v">1</span></div>
+          <div class="statRow"><span class="k">消行</span><span id="uiLines" class="v">0</span></div>
+          <div class="statRow"><span class="k">连击</span><span id="uiCombo" class="v">—</span></div>
+        </section>
+
+        <section class="panel help">
+          <div class="panelTitle">操作</div>
+          <div class="helpGrid">
+            <div class="key">← / →</div><div class="val">移动（DAS / ARR）</div>
+            <div class="key">↓</div><div class="val">软降</div>
+            <div class="key">空格</div><div class="val">硬降</div>
+            <div class="key">Z</div><div class="val">逆时针旋转</div>
+            <div class="key">X / ↑</div><div class="val">顺时针旋转</div>
+            <div class="key">P</div><div class="val">暂停 / 继续</div>
+            <div class="key">R</div><div class="val">重开</div>
+            <div class="key">M</div><div class="val">开关音效</div>
+          </div>
+        </section>
+
+        <section class="panel tip">
+          <div class="panelTitle">提示</div>
+          <div class="tipText">消行反馈已加入：短促闪光 + 扫描条，克制但清晰。画面与文字全部按像素对齐，避免“马赛克糊”。</div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <span class="muted">离线可运行 · 无依赖 · Canvas + DOM 混合（清晰 UI + 高性能棋盘）</span>
+    </footer>
+  </div>
+
+  <audio id="bgm" preload="auto" loop></audio>
+
+  <script src="audio.js"></script>
+  <script src="game.js"></script>
+  <script src="input.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

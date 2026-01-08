@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>游戏大厅 · 复古桌面</title>
+  <meta name="theme-color" content="#0a6a6a" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="desktop" class="desktop" aria-label="游戏大厅桌面">
+    <!-- Android (mobile) decorative system chrome -->
+    <div class="android-statusbar" aria-hidden="true">
+      <div class="android-statusbar__left">
+        <span class="android-statusbar__time" id="androidTime">12:00</span>
+      </div>
+      <div class="android-statusbar__right">
+        <span class="android-ic android-ic--signal" aria-hidden="true"></span>
+        <span class="android-ic android-ic--wifi" aria-hidden="true"></span>
+        <span class="android-ic android-ic--battery" aria-hidden="true"></span>
+      </div>
+    </div>
+
+    <div class="desktop__icons" role="list" aria-label="桌面图标">
+      <button class="icon" type="button" data-game="2048" role="listitem" aria-label="2048">
+        <img class="icon__img" alt="" src="./assets/icon-2048.svg" />
+        <span class="icon__label">2048</span>
+      </button>
+
+      <button class="icon" type="button" data-game="minesweeper" role="listitem" aria-label="扫雷">
+        <img class="icon__img" alt="" src="./assets/icon-minesweeper.svg" />
+        <span class="icon__label">扫雷</span>
+      </button>
+
+      <button class="icon" type="button" data-game="snake" role="listitem" aria-label="贪吃蛇">
+        <img class="icon__img" alt="" src="./assets/icon-snake.svg" />
+        <span class="icon__label">贪吃蛇</span>
+      </button>
+
+      <button class="icon" type="button" data-game="tetris" role="listitem" aria-label="俄罗斯方块">
+        <img class="icon__img" alt="" src="./assets/icon-tetris.svg" />
+        <span class="icon__label">俄罗斯方块</span>
+      </button>
+    </div>
+
+    <div id="windows" class="windows" aria-label="窗口层"></div>
+
+    <!-- Windows (desktop) taskbar -->
+    <div class="taskbar" aria-label="任务栏">
+      <button class="startbtn" type="button" aria-label="开始">
+        <span class="winlogo" aria-hidden="true"></span>
+        开始
+      </button>
+
+      <div class="taskbar__tasks" id="taskbarTasks" aria-label="已打开窗口"></div>
+
+      <div class="taskbar__tray" aria-label="系统托盘">
+        <span class="tray__divider" aria-hidden="true"></span>
+        <span class="tray__clock" id="trayClock">00:00</span>
+      </div>
+    </div>
+
+    <div class="android-navbar" aria-label="Android 导航栏">
+      <button class="android-navbtn" type="button" id="androidRecentsBtn" aria-label="最近任务（装饰）">
+        <span class="android-nav android-nav--recents" aria-hidden="true"></span>
+      </button>
+      <button class="android-navbtn" type="button" id="androidHomeBtn" aria-label="返回桌面（关闭游戏）">
+        <span class="android-nav android-nav--home" aria-hidden="true"></span>
+      </button>
+      <button class="android-navbtn" type="button" id="androidBackBtn" aria-label="返回（关闭游戏）">
+        <span class="android-nav android-nav--back" aria-hidden="true"></span>
+      </button>
+    </div>
+
+    <div class="hint" aria-hidden="true">
+      <div class="hint__card">
+        <div class="hint__title">提示</div>
+        <div class="hint__text">电脑端：双击图标打开；可拖动窗口、点叉关闭；任务栏可切换窗口。手机端：点击图标全屏打开（Android 风格外壳）。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

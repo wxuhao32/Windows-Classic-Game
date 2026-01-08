@@ -1,0 +1,244 @@
+/* 复古俄罗斯方块 · 全中文界面 · 清晰不糊
+   - 棋盘：Canvas（高性能）
+   - 信息：DOM（字体清晰）
+   - 无廉价渐变/阴影/花哨特效
+*/
+:root{
+  --bg:#0b0f14;
+  --panel:#0e141c;
+  --panel2:#0c1118;
+  --ink:#e7eef7;
+  --muted:#9fb2c7;
+  --line:#1b2633;
+  --accent:#76d7ff;
+  --warn:#ffe066;
+  --bad:#ff6f7a;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  letter-spacing:0.01em;
+}
+
+#app{
+  max-width: 1080px;
+  margin: 16px auto;
+  padding: 0 14px 16px;
+}
+
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding: 12px 12px;
+  border:1px solid var(--line);
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+}
+
+.brand{display:flex; align-items:center; gap:12px}
+.brand .dot{
+  width:10px; height:10px;
+  background:var(--accent);
+  outline: 2px solid #0a0f16;
+}
+.brandText .title{font-weight:800; font-size:16px; line-height:1.1}
+.brandText .sub{color:var(--muted); font-size:12px; margin-top:2px}
+
+.btns{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end}
+.btn{
+  border:1px solid var(--line);
+  background:#0c121a;
+  color:var(--ink);
+  padding:8px 10px;
+  font: inherit;
+  font-size:12px;
+  letter-spacing:0.04em;
+  cursor:pointer;
+}
+.btn:hover{border-color:#2b3c51}
+.btn:active{transform: translateY(1px)}
+.btn[aria-pressed="false"]{color:var(--muted)}
+
+.layout{
+  margin-top: 12px;
+  display:grid;
+  grid-template-columns: 1fr 320px;
+  gap:12px;
+  align-items:start;
+}
+
+.gameArea{
+  position:relative;
+  border:1px solid var(--line);
+  background:#070b10;
+  padding: 10px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+
+#board{
+  width: min(100%, 540px);
+  height:auto;
+  display:block;
+  border:1px solid #121b26;
+  background:#05080c;
+  image-rendering: pixelated;
+}
+
+.overlay{
+  position:absolute;
+  inset:10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(0,0,0,0.42);
+}
+.overlay.hidden{display:none}
+
+.overlayBox{
+  border:1px solid var(--line);
+  background:#0b1017;
+  padding: 14px 14px;
+  min-width: 220px;
+  text-align:center;
+}
+.overlayTitle{
+  font-weight:800;
+  letter-spacing:0.08em;
+  margin-bottom: 6px;
+}
+.overlayHint{color:var(--muted); font-size:12px}
+
+.side{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.panel{
+  border:1px solid var(--line);
+  background:#070b10;
+  padding:10px;
+}
+.panelTitle{
+  color:var(--muted);
+  font-size:12px;
+  letter-spacing:0.08em;
+  margin-bottom: 8px;
+}
+#next{
+  width:100%;
+  height:auto;
+  display:block;
+  border:1px solid #121b26;
+  background:#05080c;
+  image-rendering: pixelated;
+}
+
+.stats .statRow{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  padding: 6px 0;
+  border-top:1px solid rgba(255,255,255,0.06);
+}
+.stats .statRow:first-of-type{border-top:0}
+.stats .k{color:var(--muted); font-size:12px}
+.stats .v{font-weight:800; font-size:16px}
+
+.helpGrid{
+  display:grid;
+  grid-template-columns: 96px 1fr;
+  gap:6px 10px;
+  color:var(--muted);
+  font-size:12px;
+}
+.key{
+  color:var(--ink);
+  border:1px solid #162233;
+  background:#0a1018;
+  padding:4px 6px;
+  text-align:center;
+}
+
+.tipText{color:var(--muted); font-size:12px; line-height:1.5}
+
+.foot{
+  margin-top: 10px;
+  color:var(--muted);
+  font-size:12px;
+  padding: 0 2px;
+}
+
+@media (max-width: 920px){
+  .layout{grid-template-columns: 1fr}
+  .side{order:2}
+  .gameArea{order:1}
+}
+@media (max-width: 720px){
+  .btns{gap:6px}
+  .btn{padding:10px 10px; font-size:12px}
+  #board{width: min(100%, 420px);}
+  .panel.help{display:none} /* 手机上默认隐藏长说明，避免拥挤 */
+}
+
+
+
+/* 触控按键（仅移动端显示） */
+.touch{
+  border:1px solid var(--line);
+  background:#070b10;
+  padding:10px;
+  display:grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap:8px;
+  align-items:center;
+  justify-items:stretch;
+  user-select:none;
+  touch-action:none;
+}
+.touch.hidden{display:none}
+.tbtn{
+  border:1px solid #162233;
+  background:#0a1018;
+  color:var(--ink);
+  padding:12px 10px;
+  font: inherit;
+  font-weight:800;
+  font-size:16px;
+  letter-spacing:0.06em;
+}
+.tbtn:active{transform: translateY(1px)}
+.tbtn.wide{grid-column: span 2; font-size:14px}
+
+
+/* 视口适配：保证棋盘完整可见（移动端不需要下滑） */
+html, body { height: 100%; }
+body { overflow-x: hidden; }
+
+@media (max-width: 720px){
+  #app{ margin: 8px auto; padding: 0 10px 10px; }
+  .topbar{ padding: 10px; }
+  .brandText .sub{ display:none; }      /* 小屏隐藏副标题 */
+  .foot{ display:none; }               /* 小屏隐藏页脚，换空间给棋盘 */
+  .panel.tip{ display:none; }          /* 小屏隐藏提示面板，避免过长 */
+  .panel.help{ display:none; }         /* 小屏隐藏长说明（已在之前隐藏） */
+  .layout{ gap:10px; }
+  .gameArea{ padding: 8px; }
+  .panel{ padding: 8px; }
+  .panelTitle{ margin-bottom: 6px; }
+}
+
+/* 超矮屏（比如横屏手机/小窗口）：进一步压缩 */
+@media (max-height: 720px){
+  .topbar{ padding: 9px 10px; }
+  .brandText .sub{ display:none; }
+  .foot{ display:none; }
+}

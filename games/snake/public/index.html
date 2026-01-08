@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Snake Arcade</title>
+  <meta name="description" content="Retro pixel Snake game" />
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__logo" aria-hidden="true">▣</span>
+        <div class="brand__text">
+          <div class="brand__title">SNAKE ARCADE</div>
+          <div class="brand__subtitle">Pixel Retro Edition</div>
+        </div>
+      </div>
+
+      <div class="hud">
+        <div class="hud__item">
+          <div class="hud__label">SCORE</div>
+          <div class="hud__value" id="score">0</div>
+        </div>
+        <div class="hud__item">
+          <div class="hud__label">BEST</div>
+          <div class="hud__value" id="best">0</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="btnTheme" type="button" title="切换主题">
+          <span class="btn__icon" aria-hidden="true">◐</span>
+          <span class="btn__text">主题</span>
+        </button>
+        <button class="btn" id="btnSound" type="button" title="音效开关">
+          <span class="btn__icon" id="soundIcon" aria-hidden="true">♪</span>
+          <span class="btn__text">音效</span>
+        </button>
+        <button class="btn" id="btnMusic" type="button" title="音乐开关">
+          <span class="btn__icon" id="musicIcon" aria-hidden="true">♫</span>
+          <span class="btn__text">音乐</span>
+        </button>
+        <button class="btn" id="btnFullscreen" type="button" title="全屏">
+          <span class="btn__icon" id="fsIcon" aria-hidden="true">⤢</span>
+          <span class="btn__text">全屏</span>
+        </button>
+        <button class="btn btn--primary" id="btnRestart" type="button" title="重新开始">
+          <span class="btn__icon" aria-hidden="true">⟳</span>
+          <span class="btn__text">重开</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <section class="board-wrap" aria-label="Game Board">
+        <canvas id="game" width="480" height="480" aria-label="Snake Game"></canvas>
+
+        <div class="overlay" id="overlay" aria-live="polite">
+          <div class="overlay__card">
+            <div class="overlay__title" id="overlayTitle">READY?</div>
+            <div class="overlay__desc" id="overlayDesc">
+              方向键/WASD 或 触屏方向键/滑动开始
+            </div>
+            <div class="overlay__hint">
+              <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span>
+              <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Touch Controls">
+        <div class="dpad" role="group" aria-label="Direction Pad">
+          <button class="dpad__btn dpad__btn--up" data-dir="up" aria-label="Up">↑</button>
+          <button class="dpad__btn dpad__btn--left" data-dir="left" aria-label="Left">←</button>
+          <button class="dpad__btn dpad__btn--right" data-dir="right" aria-label="Right">→</button>
+          <button class="dpad__btn dpad__btn--down" data-dir="down" aria-label="Down">↓</button>
+          <div class="dpad__center" aria-hidden="true"></div>
+        </div>
+
+        <div class="tips">
+          <div class="tip">触屏：点击方向键或滑动</div>
+          <div class="tip">规则：吃到食物变长，撞墙/撞自己失败</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__left">© Snake Arcade</div>
+      <div class="footer__right">v1.0</div>
+    </footer>
+  </div>
+
+  <script src="./js/bundle.js" defer></script>
+</body>
+</html>
