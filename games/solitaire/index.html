@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>接龙纸牌</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app" id="app" aria-label="接龙纸牌（Klondike）">
+    <header class="topbar">
+      <div class="topbar__left">
+        <div class="brand">接龙纸牌</div>
+      </div>
+      <div class="topbar__right">
+        <button class="btn" id="btnNew" type="button">新开一局</button>
+        <button class="btn" id="btnUndo" type="button" disabled>撤销</button>
+        <button class="btn" id="btnAuto" type="button">自动收牌</button>
+        <button class="btn" id="btnRules" type="button">规则</button>
+      </div>
+    </header>
+
+    <main class="board" id="board">
+      <section class="row row--top" aria-label="上方区域">
+        <div class="pile-group pile-group--left">
+          <div class="pile pile--stock" id="stock" data-drop="stock" aria-label="牌库（点击翻牌）">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">牌库</div>
+          </div>
+          <div class="pile pile--waste" id="waste" data-drop="waste" aria-label="翻牌堆">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">翻牌</div>
+          </div>
+        </div>
+
+        <div class="pile-group pile-group--right" aria-label="收集区">
+          <div class="pile pile--foundation" data-drop="foundation" data-i="0" aria-label="收集区 1">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">♠</div>
+          </div>
+          <div class="pile pile--foundation" data-drop="foundation" data-i="1" aria-label="收集区 2">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">♥</div>
+          </div>
+          <div class="pile pile--foundation" data-drop="foundation" data-i="2" aria-label="收集区 3">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">♦</div>
+          </div>
+          <div class="pile pile--foundation" data-drop="foundation" data-i="3" aria-label="收集区 4">
+            <div class="pile__slot"></div>
+            <div class="pile__hint">♣</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="row row--tableau" aria-label="桌面七列">
+        <div class="tableau" id="tableau" role="list" aria-label="桌面列">
+          <!-- columns injected by JS -->
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar" aria-label="状态栏">
+      <div id="statusText" class="statusbar__text">提示：手机上可“点选牌→再点目标位置”移动。</div>
+    </footer>
+  </div>
+
+  <!-- 规则弹窗 -->
+  <div class="modal" id="rulesModal" aria-hidden="true" role="dialog" aria-label="规则">
+    <div class="modal__mask" data-close="rules"></div>
+    <div class="modal__card">
+      <div class="modal__head">
+        <div class="modal__title">游戏规则（Klondike 接龙）</div>
+        <button class="iconbtn" type="button" data-close="rules" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal__body rules">
+        <h3>目标</h3>
+        <p>把 52 张牌按花色分别放入 4 个「收集区」，从 A 开始依次递增到 K。四个收集区都到 K 即胜利。</p>
+
+        <h3>区域说明</h3>
+        <ul>
+          <li><b>牌库</b>：左上角盖着的牌。点击翻 1 张到「翻牌堆」。牌库空时再点击可把翻牌堆回收成牌库继续翻。</li>
+          <li><b>翻牌堆</b>：牌库翻出的牌，只有最上面一张可操作。</li>
+          <li><b>收集区</b>：右上角 4 个位置。每个收集区只能放同一花色，从 A 起递增到 K。</li>
+          <li><b>桌面 7 列</b>：下方 7 列牌，是主要操作区域。</li>
+        </ul>
+
+        <h3>移动规则</h3>
+        <ul>
+          <li><b>桌面列之间</b>：必须 <b>红黑交替</b> 且 <b>点数递减</b>（例如 9 可放在 10 下面）。</li>
+          <li><b>空列</b>：只能放 <b>K（国王）</b>（可连同其下方整段一起移动）。</li>
+          <li><b>收集区</b>：同花色递增 <b>A→2→…→K</b>，只能放单张。</li>
+          <li>某列最上面是盖牌且上方无牌时，可点击翻开。</li>
+        </ul>
+
+        <h3>操作方式</h3>
+        <ul>
+          <li><b>拖拽</b>：拖动可移动的牌（或整段）到目标位置松开。</li>
+          <li><b>点选移动</b>：先点击选中牌，再点击目标堆/目标列尝试放置（手机推荐）。</li>
+          <li><b>双击</b>（桌面端）：双击顶牌可尝试自动送入收集区。</li>
+          <li><b>自动收牌</b>：将当前能直接进入收集区的牌尽量送过去。</li>
+          <li><b>撤销</b>：回退一步操作。</li>
+        </ul>
+      </div>
+      <div class="modal__foot">
+        <button class="btn btn--primary" type="button" data-close="rules">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 胜利弹窗 -->
+  <div class="modal" id="winModal" aria-hidden="true" role="dialog" aria-label="胜利">
+    <div class="modal__mask" data-close="win"></div>
+    <div class="modal__card">
+      <div class="modal__head">
+        <div class="modal__title">恭喜你胜利！</div>
+        <button class="iconbtn" type="button" data-close="win" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal__body">
+        <p>你已将所有牌收集到收集区。</p>
+      </div>
+      <div class="modal__foot">
+        <button class="btn" type="button" data-close="win">继续看看</button>
+        <button class="btn btn--primary" id="btnWinNew" type="button">新开一局</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
