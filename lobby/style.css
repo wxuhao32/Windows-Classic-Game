@@ -78,6 +78,7 @@ body:before{
 
 .icon{
   width:92px;
+  touch-action: manipulation;
   padding:8px 6px;
   border:1px solid transparent;
   background:transparent;

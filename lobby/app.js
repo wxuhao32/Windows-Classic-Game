@@ -4,7 +4,7 @@
   const icons = Array.from(document.querySelectorAll(".icon"));
   const taskbarTasks = document.getElementById("taskbarTasks");
   const trayClock = document.getElementById("trayClock");
-  const androidTime = document\.getElementById\("androidTime"\);
+  const androidTime = document.getElementById("androidTime");
   const androidHomeBtn = document.getElementById("androidHomeBtn");
   const androidBackBtn = document.getElementById("androidBackBtn");
 
@@ -251,35 +251,33 @@
   }
 
   // Icon interactions
-  icons.forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      selectIcon(btn);
-    });
+const isTouchDevice = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
 
-    // Desktop: double click to open
-    btn.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      openGame(btn.dataset.game);
-    });
+icons.forEach(btn => {
+  // Click:
+  // - Desktop: select icon
+  // - Mobile/touch: open game (single tap)
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
 
-    // Mobile: tap to open (no dblclick)
-    btn.addEventListener("pointerup", (e) => {
-      if (!e.pointerType || e.pointerType === "mouse") return;
+    if (isMobile() || isTouchDevice) {
       openGame(btn.dataset.game);
-    });
+      return;
+    }
+    selectIcon(btn);
   });
 
-  // Click desktop clears selection
-  desktop.addEventListener("click", () => clearIconSelection());
+  // Desktop: double click to open
+  btn.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    if (isMobile()) return; // avoid weirdness when emulating
+    openGame(btn.dataset.game);
+  });
+});
 
-  // Prevent iOS double-tap zoom on icons
-  document.addEventListener("touchend", (e) => {
-    const target = e.target;
-    if (target && target.closest && target.closest(".icon")) {
-      e.preventDefault();
-    }
-  }, { passive: false });
+// Click desktop clears selection
+
+  desktop.addEventListener("click", () => clearIconSelection());
 
   
   // Android bottom navbar actions (mobile only)
@@ -299,8 +297,17 @@
   }
 
 // On resize across breakpoint, keep chrome sane
-  mqMobile.addEventListener?.("change", () => {
+  if (mqMobile.addEventListener) mqMobile.addEventListener("change", () => {
     // Bring any open window to front to refresh active state and avoid odd focus
+    const all = Array.from(document.querySelectorAll(".window"));
+    if (all.length){
+      const last = all[all.length - 1];
+      const found = Array.from(winMap.entries()).find(([,v]) => v.winEl === last);
+      bringToFront(last, found ? found[0] : "");
+    }
+  });
+  else if (mqMobile.addListener) mqMobile.addListener(() => {
+    // legacy Safari
     const all = Array.from(document.querySelectorAll(".window"));
     if (all.length){
       const last = all[all.length - 1];
