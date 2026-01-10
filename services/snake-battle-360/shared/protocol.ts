@@ -1,6 +1,6 @@
 import type { GameState, Vec2 } from "./gameEngine";
 
-export const PROTOCOL_VERSION = 4 as const;
+export const PROTOCOL_VERSION = 5 as const;
 
 export type Stick = Vec2;
 
@@ -20,7 +20,7 @@ export type PauseProposal = {
   action: PauseAction;
   requestedBy: string;
   requestedByName: string;
-  eligible: Array<{ clientId: string; playerName: string; snakeId: string }>;
+  eligible: Array<{ clientId: string; playerName: string; snakeId: string | null }>;
   votes: Record<string, PauseVote | null>;
   expiresAt: number;
 };

@@ -379,7 +379,9 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
     return;
   }
 
-  const strength = clamp((raw - DEAD) / (1 - DEAD), 0, 1);
+  // remap after deadzone and apply a curve so mid-strength steering feels snappier
+  let strength = clamp((raw - DEAD) / (1 - DEAD), 0, 1);
+  strength = Math.sqrt(strength); // curve: more responsive around mid-range
   snake.steerStrength = strength;
 
   const v = norm(stick);
@@ -526,7 +528,7 @@ export function updateGame(state: GameState, dtMs: number) {
   for (const s of state.snakes) {
     if (!s.isAlive) continue;
 
-    const maxDelta = MAX_TURN_RATE * dt * (0.55 + 0.45 * clamp(s.steerStrength || 0, 0, 1));
+    const maxDelta = MAX_TURN_RATE * dt * (0.30 + 0.70 * clamp(s.steerStrength || 0, 0, 1));
     if (s.targetAngle !== undefined) {
       s.angle = rotateTowards(s.angle, s.targetAngle, maxDelta);
     }
@@ -586,7 +588,7 @@ export function updateGame(state: GameState, dtMs: number) {
     const head = s.body[0];
     for (let i = state.food.length - 1; i >= 0; i--) {
       const f = state.food[i];
-      if (dist(head, f.position) < s.radius + f.radius + 2) {
+      if (dist(head, f.position) < s.radius + f.radius + 2.5) {
         s.length += f.value;
         s.score += Math.round(f.value);
         state.food.splice(i, 1);

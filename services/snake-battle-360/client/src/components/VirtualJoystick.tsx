@@ -31,7 +31,7 @@ export function VirtualJoystick({
   const [knob, setKnob] = useState({ x: 0, y: 0 });
 
   const maxR = 54; // px
-  const dead = 0.07; // normalized
+  const dead = 0.06; // normalized
 
   const containerStyle = useMemo(() => {
     const common: React.CSSProperties = {
@@ -108,10 +108,16 @@ export function VirtualJoystick({
     if (mag < dead) {
       schedule({ x: 0, y: 0 });
     } else {
-      // clamp to [-1,1]
+      // remap after deadzone + apply curve so mid movement feels snappier
+      const t = Math.max(0, Math.min(1, (mag - dead) / (1 - dead)));
+      const curved = Math.sqrt(t);
+
+      const ux = sx / (mag || 1);
+      const uy = sy / (mag || 1);
+
       schedule({
-        x: Math.max(-1, Math.min(1, sx)),
-        y: Math.max(-1, Math.min(1, sy)),
+        x: Math.max(-1, Math.min(1, ux * curved)),
+        y: Math.max(-1, Math.min(1, uy * curved)),
       });
     }
 

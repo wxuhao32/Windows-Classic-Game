@@ -85,21 +85,15 @@ export default function Game() {
     mode === "online" ? initializeArena(GAME_WIDTH, GAME_HEIGHT, 12) : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
   );
 
-  // ✅ 性能关键：联机模式下不要每个 state 包都触发 React rerender。
-  // 用 ref 持有最新状态给 Canvas 以 60fps 渲染，UI 只在较低频率刷新。
-  const latestStateRef = useRef<GameState>(gameState);
-
   // 联机状态
   const wsRef = useRef<WebSocket | null>(null);
+  // Input smoothing: throttle ws input to reduce main-thread stutter
+  const desiredStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastSentStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const clientIdRef = useRef<string | null>(null);
   const [wsStatus, setWsStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [clientId, setClientId] = useState<string | null>(null);
   const [mySnakeId, setMySnakeId] = useState<string | null>(mode === "offline" ? "player" : null);
-
-  // ✅ 输入发送节流：摇杆/键盘在移动端可能触发非常高频事件。
-  // 过多的 JSON.stringify/ws.send 会造成主线程卡顿与网络拥塞。
-  const lastInputSentAtRef = useRef(0);
-  const lastStickSentRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // 暂停投票（联机）
   const [pauseProposal, setPauseProposal] = useState<PauseProposal | null>(null);
@@ -227,41 +221,29 @@ export default function Game() {
     return () => clearInterval(timer);
   }, [mode]);
 
-  // 联机：UI 状态节流刷新（Canvas 用 ref 即时渲染）
-  useEffect(() => {
-    if (mode !== "online") return;
-    const timer = setInterval(() => {
-      // shallow copy to trigger rerender but keep allocations small
-      setGameState({ ...latestStateRef.current });
-    }, 120); // ~8Hz UI 刷新足够（排行榜/信息）
-    return () => clearInterval(timer);
-  }, [mode]);
-
   const sendWs = useCallback((msg: ClientToServerMessage) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(msg));
   }, []);
 
-  // Online input throttle: ~25fps max, and only send if stick changes noticeably.
-  const sendOnlineStick = useCallback(
-    (stick: { x: number; y: number }) => {
-      const now = performance.now();
-      const lastT = lastInputSentAtRef.current;
-      const last = lastStickSentRef.current;
+  // Throttle input sending (online): at most ~25Hz and ignore tiny changes
+  useEffect(() => {
+    if (mode !== "online") return;
 
-      const dx = stick.x - last.x;
-      const dy = stick.y - last.y;
-      const changed = dx * dx + dy * dy > 0.0009; // ~= 0.03
+    const timer = window.setInterval(() => {
+      const s = desiredStickRef.current;
+      const p = lastSentStickRef.current;
+      const dx = s.x - p.x;
+      const dy = s.y - p.y;
+      if (Math.hypot(dx, dy) < 0.02) return;
 
-      if (now - lastT < 40 && !changed) return; // <=25Hz if no meaningful change
+      lastSentStickRef.current = { x: s.x, y: s.y };
+      sendWs({ type: "input", stick: { x: s.x, y: s.y } });
+    }, 40);
 
-      lastInputSentAtRef.current = now;
-      lastStickSentRef.current = stick;
-      sendWs({ type: "input", stick });
-    },
-    [sendWs]
-  );
+    return () => window.clearInterval(timer);
+  }, [mode, sendWs]);
 
   // 联机：连接 WS
   useEffect(() => {
@@ -303,14 +285,12 @@ export default function Game() {
       if (msg.type === "welcome") {
         setClientId(msg.clientId);
         clientIdRef.current = msg.clientId;
-        latestStateRef.current = msg.state;
-        setGameState({ ...msg.state });
+        setGameState(msg.state);
         setMySnakeId(msg.mySnakeId || null);
         return;
       }
       if (msg.type === "state") {
-        // ✅ 高频状态包只写入 ref，避免 React 频繁 rerender 导致卡顿
-        latestStateRef.current = msg.state;
+        setGameState(msg.state);
         const cid = clientIdRef.current;
         if (cid) {
           const mine = msg.state.snakes.find((s) => s.controlledBy === cid);
@@ -367,7 +347,8 @@ export default function Game() {
             return prev;
           });
         } else {
-          sendOnlineStick(stick);
+          desiredStickRef.current = stick;
+          sendWs({ type: "input", stick });
         }
       };
 
@@ -384,8 +365,7 @@ export default function Game() {
             return prev;
           });
         } else {
-          const paused = latestStateRef.current.isPaused;
-          sendWs({ type: "pause_request", action: paused ? "resume" : "pause" });
+          sendWs({ type: "pause_request", action: gameState.isPaused ? "resume" : "pause" });
         }
       }
     };
@@ -408,7 +388,9 @@ export default function Game() {
             return prev;
           });
         } else {
-          sendOnlineStick({ x: 0, y: 0 });
+          desiredStickRef.current = { x: 0, y: 0 };
+          lastSentStickRef.current = { x: 0, y: 0 };
+          sendWs({ type: "input", stick: { x: 0, y: 0 } });
         }
       }
     };
@@ -419,7 +401,7 @@ export default function Game() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [mode, sendOnlineStick, gameState.isPaused]);
+  }, [mode, sendWs, gameState.isPaused]);
 
   const handlePauseToggle = useCallback(() => {
     if (mode === "offline") {
@@ -429,9 +411,8 @@ export default function Game() {
       });
       return;
     }
-    const paused = latestStateRef.current.isPaused;
-    sendWs({ type: "pause_request", action: paused ? "resume" : "pause" });
-  }, [mode, sendWs]);
+    sendWs({ type: "pause_request", action: gameState.isPaused ? "resume" : "pause" });
+  }, [mode, sendWs, gameState.isPaused]);
 
   const handleRestart = useCallback(() => {
     if (mode === "online") {
@@ -457,10 +438,10 @@ export default function Game() {
           return prev;
         });
       } else {
-        sendOnlineStick(stick);
+        desiredStickRef.current = stick;
       }
     },
-    [mode, sendOnlineStick]
+    [mode]
   );
 
   const isEligibleToVote = useMemo(() => {
@@ -634,7 +615,7 @@ export default function Game() {
 
         {/* 游戏画布 */}
         <div className="flex justify-center mb-6">
-          <GameCanvas gameState={gameState} stateRef={mode === "online" ? latestStateRef : undefined} mySnakeId={mySnakeId} />
+          <GameCanvas gameState={gameState} mySnakeId={mySnakeId} />
         </div>
 
         {/* 游戏信息 */}
