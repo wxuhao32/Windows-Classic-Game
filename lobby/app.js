@@ -14,6 +14,7 @@
     "2048": { title: "2048", src: "../games/2048/index.html", icon: "./assets/icon-2048.svg" },
     "minesweeper": { title: "扫雷", src: "../games/minesweeper/index.html", icon: "./assets/icon-minesweeper.svg" },
     "snake": { title: "贪吃蛇", src: "../games/snake/index.html", icon: "./assets/icon-snake.svg" },
+    "snake-battle-360": { title: "蛇大作战(联机)", src: "../games/snake-battle-360/index.html", icon: "./assets/icon-snake-battle-360.svg" },
     "tetris": { title: "俄罗斯方块", src: "../games/tetris/index.html", icon: "./assets/icon-tetris.svg" },
     "solitaire": { title: "纸牌接龙", src: "../games/solitaire/index.html", icon: "./assets/icon-solitaire.svg" },
   };
