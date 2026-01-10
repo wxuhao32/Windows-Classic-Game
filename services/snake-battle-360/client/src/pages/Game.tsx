@@ -85,12 +85,21 @@ export default function Game() {
     mode === "online" ? initializeArena(GAME_WIDTH, GAME_HEIGHT, 12) : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
   );
 
+  // ✅ 性能关键：联机模式下不要每个 state 包都触发 React rerender。
+  // 用 ref 持有最新状态给 Canvas 以 60fps 渲染，UI 只在较低频率刷新。
+  const latestStateRef = useRef<GameState>(gameState);
+
   // 联机状态
   const wsRef = useRef<WebSocket | null>(null);
   const clientIdRef = useRef<string | null>(null);
   const [wsStatus, setWsStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [clientId, setClientId] = useState<string | null>(null);
   const [mySnakeId, setMySnakeId] = useState<string | null>(mode === "offline" ? "player" : null);
+
+  // ✅ 输入发送节流：摇杆/键盘在移动端可能触发非常高频事件。
+  // 过多的 JSON.stringify/ws.send 会造成主线程卡顿与网络拥塞。
+  const lastInputSentAtRef = useRef(0);
+  const lastStickSentRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // 暂停投票（联机）
   const [pauseProposal, setPauseProposal] = useState<PauseProposal | null>(null);
@@ -218,11 +227,41 @@ export default function Game() {
     return () => clearInterval(timer);
   }, [mode]);
 
+  // 联机：UI 状态节流刷新（Canvas 用 ref 即时渲染）
+  useEffect(() => {
+    if (mode !== "online") return;
+    const timer = setInterval(() => {
+      // shallow copy to trigger rerender but keep allocations small
+      setGameState({ ...latestStateRef.current });
+    }, 120); // ~8Hz UI 刷新足够（排行榜/信息）
+    return () => clearInterval(timer);
+  }, [mode]);
+
   const sendWs = useCallback((msg: ClientToServerMessage) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(msg));
   }, []);
+
+  // Online input throttle: ~25fps max, and only send if stick changes noticeably.
+  const sendOnlineStick = useCallback(
+    (stick: { x: number; y: number }) => {
+      const now = performance.now();
+      const lastT = lastInputSentAtRef.current;
+      const last = lastStickSentRef.current;
+
+      const dx = stick.x - last.x;
+      const dy = stick.y - last.y;
+      const changed = dx * dx + dy * dy > 0.0009; // ~= 0.03
+
+      if (now - lastT < 40 && !changed) return; // <=25Hz if no meaningful change
+
+      lastInputSentAtRef.current = now;
+      lastStickSentRef.current = stick;
+      sendWs({ type: "input", stick });
+    },
+    [sendWs]
+  );
 
   // 联机：连接 WS
   useEffect(() => {
@@ -264,12 +303,14 @@ export default function Game() {
       if (msg.type === "welcome") {
         setClientId(msg.clientId);
         clientIdRef.current = msg.clientId;
-        setGameState(msg.state);
+        latestStateRef.current = msg.state;
+        setGameState({ ...msg.state });
         setMySnakeId(msg.mySnakeId || null);
         return;
       }
       if (msg.type === "state") {
-        setGameState(msg.state);
+        // ✅ 高频状态包只写入 ref，避免 React 频繁 rerender 导致卡顿
+        latestStateRef.current = msg.state;
         const cid = clientIdRef.current;
         if (cid) {
           const mine = msg.state.snakes.find((s) => s.controlledBy === cid);
@@ -326,7 +367,7 @@ export default function Game() {
             return prev;
           });
         } else {
-          sendWs({ type: "input", stick });
+          sendOnlineStick(stick);
         }
       };
 
@@ -343,7 +384,8 @@ export default function Game() {
             return prev;
           });
         } else {
-          sendWs({ type: "pause_request", action: gameState.isPaused ? "resume" : "pause" });
+          const paused = latestStateRef.current.isPaused;
+          sendWs({ type: "pause_request", action: paused ? "resume" : "pause" });
         }
       }
     };
@@ -366,7 +408,7 @@ export default function Game() {
             return prev;
           });
         } else {
-          sendWs({ type: "input", stick: { x: 0, y: 0 } });
+          sendOnlineStick({ x: 0, y: 0 });
         }
       }
     };
@@ -377,7 +419,7 @@ export default function Game() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [mode, sendWs, gameState.isPaused]);
+  }, [mode, sendOnlineStick, gameState.isPaused]);
 
   const handlePauseToggle = useCallback(() => {
     if (mode === "offline") {
@@ -387,8 +429,9 @@ export default function Game() {
       });
       return;
     }
-    sendWs({ type: "pause_request", action: gameState.isPaused ? "resume" : "pause" });
-  }, [mode, sendWs, gameState.isPaused]);
+    const paused = latestStateRef.current.isPaused;
+    sendWs({ type: "pause_request", action: paused ? "resume" : "pause" });
+  }, [mode, sendWs]);
 
   const handleRestart = useCallback(() => {
     if (mode === "online") {
@@ -414,10 +457,10 @@ export default function Game() {
           return prev;
         });
       } else {
-        sendWs({ type: "input", stick });
+        sendOnlineStick(stick);
       }
     },
-    [mode, sendWs]
+    [mode, sendOnlineStick]
   );
 
   const isEligibleToVote = useMemo(() => {
@@ -591,7 +634,7 @@ export default function Game() {
 
         {/* 游戏画布 */}
         <div className="flex justify-center mb-6">
-          <GameCanvas gameState={gameState} mySnakeId={mySnakeId} />
+          <GameCanvas gameState={gameState} stateRef={mode === "online" ? latestStateRef : undefined} mySnakeId={mySnakeId} />
         </div>
 
         {/* 游戏信息 */}

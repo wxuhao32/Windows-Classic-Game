@@ -9,6 +9,8 @@ import type { FoodParticle, GameState, Snake, Vec2 } from "@/lib/gameEngine";
 
 type Props = {
   gameState: GameState;
+  /** optional: latest authoritative state (avoids React rerender jitter) */
+  stateRef?: { current: GameState };
   mySnakeId?: string | null;
 };
 
@@ -64,9 +66,10 @@ function lighten(hex: string, t: number) {
   return `rgb(${rr},${gg},${bb})`;
 }
 
-export function GameCanvas({ gameState, mySnakeId }: Props) {
+export function GameCanvas({ gameState, stateRef: externalStateRef, mySnakeId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<GameState>(gameState);
+  const renderStateRef = useRef<GameState | null>(null);
   const prevStateRef = useRef<GameState | null>(null);
 
   // Smooth camera state
@@ -108,6 +111,18 @@ export function GameCanvas({ gameState, mySnakeId }: Props) {
     stateRef.current = next;
   }, [gameState, mySnakeId]);
 
+  // Initialize render state (smoothed) once.
+  useEffect(() => {
+    if (renderStateRef.current) return;
+    try {
+      // structuredClone is fast and preserves numbers/arrays
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      renderStateRef.current = (globalThis as any).structuredClone ? (globalThis as any).structuredClone(gameState) : JSON.parse(JSON.stringify(gameState));
+    } catch {
+      renderStateRef.current = JSON.parse(JSON.stringify(gameState));
+    }
+  }, [gameState]);
+
   // rAF render loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,7 +136,15 @@ export function GameCanvas({ gameState, mySnakeId }: Props) {
     const frame = (t: number) => {
       const dt = Math.min(0.05, (t - last) / 1000);
       last = t;
-      draw(ctx, canvas, stateRef.current, mySnakeId, camRef.current, dt, t);
+      // Smooth between snapshots to eliminate "一卡一卡" 的观感（尤其是联机 15~20Hz 状态包）
+      const target = externalStateRef?.current ?? stateRef.current;
+      const renderState = renderStateRef.current;
+      if (renderState) {
+        smoothToward(renderState, target, dt);
+        draw(ctx, canvas, renderState, mySnakeId, camRef.current, dt, t);
+      } else {
+        draw(ctx, canvas, target, mySnakeId, camRef.current, dt, t);
+      }
       raf = requestAnimationFrame(frame);
     };
 
@@ -153,6 +176,112 @@ function getMySnake(state: GameState, mySnakeId?: string | null): Snake | null {
   }
   const p = state.snakes.find((x) => x.isPlayer && x.isAlive);
   return p || null;
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+function remapBody(prev: Vec2[], targetLen: number): Vec2[] {
+  if (targetLen <= 0) return [];
+  if (prev.length === 0) {
+    return Array.from({ length: targetLen }, () => ({ x: 0, y: 0 }));
+  }
+  if (prev.length === targetLen) return prev.map((p) => ({ x: p.x, y: p.y }));
+
+  const out: Vec2[] = new Array(targetLen);
+  const denom = Math.max(1, targetLen - 1);
+  const prevDenom = Math.max(1, prev.length - 1);
+  for (let i = 0; i < targetLen; i++) {
+    const j = Math.round((i / denom) * prevDenom);
+    const p = prev[Math.max(0, Math.min(prev.length - 1, j))];
+    out[i] = { x: p.x, y: p.y };
+  }
+  return out;
+}
+
+/**
+ * Smoothly move a render-state toward the authoritative snapshot.
+ * This makes 15~20Hz network snapshots look like 60fps.
+ */
+function smoothToward(render: GameState, target: GameState, dt: number) {
+  // exponential smoothing factor (dt is seconds)
+  const a = 1 - Math.pow(0.001, dt); // ~10% per frame @60fps
+
+  // top-level scalars
+  render.isRunning = target.isRunning;
+  render.isPaused = target.isPaused;
+  render.gameTime = target.gameTime;
+  render.desiredSnakeCount = target.desiredSnakeCount;
+  render.viewWidth = target.viewWidth;
+  render.viewHeight = target.viewHeight;
+  render.worldWidth = target.worldWidth;
+  render.worldHeight = target.worldHeight;
+
+  // food (by id)
+  const fMap = new Map<string, FoodParticle>();
+  for (const f of render.food) fMap.set(f.id, f);
+  const nextFood: FoodParticle[] = new Array(target.food.length);
+  for (let i = 0; i < target.food.length; i++) {
+    const tf = target.food[i];
+    const rf = fMap.get(tf.id);
+    if (rf) {
+      rf.position.x = lerp(rf.position.x, tf.position.x, a);
+      rf.position.y = lerp(rf.position.y, tf.position.y, a);
+      rf.radius = tf.radius;
+      rf.value = tf.value;
+      rf.kind = tf.kind;
+      rf.color = tf.color;
+      nextFood[i] = rf;
+    } else {
+      // shallow clone is enough for render
+      nextFood[i] = {
+        ...tf,
+        position: { x: tf.position.x, y: tf.position.y },
+      } as any;
+    }
+  }
+  render.food = nextFood;
+
+  // snakes (by id)
+  const sMap = new Map<string, Snake>();
+  for (const s of render.snakes) sMap.set(s.id, s);
+  const nextSnakes: Snake[] = new Array(target.snakes.length);
+  for (let i = 0; i < target.snakes.length; i++) {
+    const ts = target.snakes[i];
+    const rs = sMap.get(ts.id);
+    if (rs) {
+      rs.isAlive = ts.isAlive;
+      rs.isPlayer = ts.isPlayer;
+      rs.controlledBy = ts.controlledBy;
+      rs.playerName = ts.playerName;
+      rs.color = ts.color;
+      rs.radius = ts.radius;
+      rs.speed = ts.speed;
+      rs.score = ts.score;
+      rs.length = lerp(rs.length, ts.length, a);
+      rs.angle = lerp(rs.angle, ts.angle, a);
+      rs.targetAngle = ts.targetAngle;
+      rs.steerStrength = ts.steerStrength;
+
+      if (rs.body.length !== ts.body.length) {
+        rs.body = remapBody(rs.body, ts.body.length);
+      }
+      for (let j = 0; j < ts.body.length; j++) {
+        const tp = ts.body[j];
+        const rp = rs.body[j];
+        rp.x = lerp(rp.x, tp.x, a);
+        rp.y = lerp(rp.y, tp.y, a);
+      }
+      nextSnakes[i] = rs;
+    } else {
+      nextSnakes[i] = {
+        ...ts,
+        body: ts.body.map((p) => ({ x: p.x, y: p.y })),
+      };
+    }
+  }
+  render.snakes = nextSnakes;
 }
 
 function draw(
