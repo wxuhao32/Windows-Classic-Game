@@ -425,7 +425,10 @@ function drawBounds(ctx: CanvasRenderingContext2D, state: GameState) {
 }
 
 function drawFood(ctx: CanvasRenderingContext2D, f: FoodParticle, t: number) {
-  const pulse = 0.75 + 0.25 * Math.sin((t - f.createdAt) * 0.006);
+  // ✅ 防御式处理：联机状态包可能缺少 createdAt（或某些版本字段名不同）
+  // 如果让 NaN 进入 canvas 绘制，会直接导致白屏/渲染循环异常。
+  const createdAt = Number.isFinite((f as any).createdAt) ? (f as any).createdAt : t;
+  const pulse = 0.75 + 0.25 * Math.sin((t - createdAt) * 0.006);
   const r = f.radius * pulse;
 
   ctx.save();

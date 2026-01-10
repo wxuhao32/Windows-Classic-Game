@@ -147,6 +147,9 @@ export function setupMultiplayer(server: HttpServer) {
             value: f.value,
             kind: f.kind,
             color: f.color,
+            // ✅ 客户端渲染会用到 createdAt 做呼吸/闪烁动画；
+            // 如果丢掉会导致 NaN 进入 canvas 绘制而白屏。
+            createdAt: (f as any).createdAt,
           }) as any
       ),
     };
