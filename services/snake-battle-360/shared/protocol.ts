@@ -1,12 +1,12 @@
 import type { GameState, Vec2 } from "./gameEngine";
 
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 
 export type Stick = Vec2;
 
 export type ClientToServerMessage =
   | { type: "hello"; version: typeof PROTOCOL_VERSION }
-  | { type: "claim"; snakeId: string }
+  | { type: "join"; roomId: string; key?: string; name?: string }
   | { type: "input"; stick: Stick }
   | { type: "restart" }
   | { type: "pause_request"; action: PauseAction }
@@ -26,7 +26,16 @@ export type PauseProposal = {
 };
 
 export type ServerToClientMessage =
-  | { type: "welcome"; version: typeof PROTOCOL_VERSION; clientId: string; roomId: string; state: GameState }
+  | {
+      type: "welcome";
+      version: typeof PROTOCOL_VERSION;
+      clientId: string;
+      roomId: string;
+      /** server-side authoritative state */
+      state: GameState;
+      /** convenience: which snake is controlled by this client (if any) */
+      mySnakeId: string | null;
+    }
   | { type: "state"; state: GameState }
   | { type: "info"; message: string }
   | { type: "error"; message: string }

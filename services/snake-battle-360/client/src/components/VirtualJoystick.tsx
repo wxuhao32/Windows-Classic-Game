@@ -2,6 +2,11 @@
  * VirtualJoystick (mobile)
  * - Ultra-responsive analog stick (pointer events + requestAnimationFrame).
  * - Two instances can be mounted (left & right) so players can choose a side.
+ *
+ * ✅ 本次优化点：
+ * 1) 死区更小（更跟手）
+ * 2) 使用 pointerDown 的触点作为“中心点”（避免需要把手指移动到圆心才有明显转向）
+ * 3) 中心点放在 ref 里（避免 React state 异步导致的首帧抖动/延迟）
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,18 +21,17 @@ export function VirtualJoystick({
   onStick: (stick: Stick) => void;
 }) {
   const pointerIdRef = useRef<number | null>(null);
-  const baseRef = useRef<HTMLDivElement>(null);
-  const knobRef = useRef<HTMLDivElement>(null);
 
   const rafRef = useRef<number | null>(null);
   const pendingRef = useRef<Stick>({ x: 0, y: 0 });
 
+  const centerRef = useRef({ x: 0, y: 0 });
+
   const [active, setActive] = useState(false);
-  const [center, setCenter] = useState({ x: 0, y: 0 });
   const [knob, setKnob] = useState({ x: 0, y: 0 });
 
-  const maxR = 50; // px
-  const dead = 0.12; // normalized
+  const maxR = 54; // px
+  const dead = 0.07; // normalized
 
   const containerStyle = useMemo(() => {
     const common: React.CSSProperties = {
@@ -75,10 +79,9 @@ export function VirtualJoystick({
     pointerIdRef.current = e.pointerId;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    setCenter({ x: cx, y: cy });
+    // ✅ 触点即中心：更接近常见手游的“摇杆手感”
+    centerRef.current = { x: e.clientX, y: e.clientY };
+
     setActive(true);
     setNeutral();
     e.preventDefault();
@@ -86,8 +89,12 @@ export function VirtualJoystick({
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (pointerIdRef.current !== e.pointerId) return;
-    const dx = e.clientX - center.x;
-    const dy = e.clientY - center.y;
+
+    const cx = centerRef.current.x;
+    const cy = centerRef.current.y;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+
     const d = Math.hypot(dx, dy) || 1;
     const clamped = Math.min(maxR, d);
     const nx = (dx / d) * clamped;
@@ -97,12 +104,17 @@ export function VirtualJoystick({
     const sx = nx / maxR;
     const sy = ny / maxR;
     const mag = Math.hypot(sx, sy);
+
     if (mag < dead) {
       schedule({ x: 0, y: 0 });
     } else {
       // clamp to [-1,1]
-      schedule({ x: Math.max(-1, Math.min(1, sx)), y: Math.max(-1, Math.min(1, sy)) });
+      schedule({
+        x: Math.max(-1, Math.min(1, sx)),
+        y: Math.max(-1, Math.min(1, sy)),
+      });
     }
+
     e.preventDefault();
   };
 
@@ -124,7 +136,6 @@ export function VirtualJoystick({
       onPointerCancel={onPointerUp}
     >
       <div
-        ref={baseRef}
         className="absolute inset-0 rounded-full"
         style={{
           background: active ? "rgba(255,255,255,0.09)" : "rgba(255,255,255,0.06)",
@@ -135,7 +146,6 @@ export function VirtualJoystick({
         }}
       />
       <div
-        ref={knobRef}
         className="absolute left-1/2 top-1/2 rounded-full"
         style={{
           width: 68,
@@ -147,10 +157,7 @@ export function VirtualJoystick({
           touchAction: "none",
         }}
       />
-      <div
-        className="absolute inset-x-0 -top-7 text-center text-[11px] text-white/65"
-        style={{ letterSpacing: "0.12em" }}
-      >
+      <div className="absolute inset-x-0 -top-7 text-center text-[11px] text-white/65" style={{ letterSpacing: "0.12em" }}>
         {side === "left" ? "LEFT" : "RIGHT"}
       </div>
     </div>

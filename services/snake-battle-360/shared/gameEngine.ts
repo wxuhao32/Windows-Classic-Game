@@ -94,7 +94,7 @@ export const SEGMENT_SPACING = 8; // segment-to-segment target spacing
 export const START_LENGTH = 220; // units
 
 export const BASE_SPEED = 170; // units/sec
-export const MAX_TURN_RATE = Math.PI * 1.35; // rad/sec (≈243°/s)
+export const MAX_TURN_RATE = Math.PI * 3.0; // rad/sec (≈540°/s) 更跟手
 
 export const FOOD_TARGET = 260;
 export const FOOD_SPAWN_PER_TICK = 6;
@@ -207,7 +207,6 @@ export function initializeGame(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW
     food: [],
     viewWidth,
     viewHeight,
-    viewHeight,
     worldWidth: WORLD_WIDTH,
     worldHeight: WORLD_HEIGHT,
     isRunning: true,
@@ -306,7 +305,7 @@ function seedFood(state: GameState, count: number) {
 function spawnFood(state: GameState, kind: "dot" | "orb" | "loot"): FoodParticle {
   const now = Date.now();
   const isOrb = kind === "orb";
-  const radius = isOrb ? randomRange(6, 9) : randomRange(3, 5);
+  const radius = isOrb ? randomRange(7, 10) : randomRange(4, 6);
   const value = isOrb ? FOOD_ORB_VALUE : FOOD_DOT_VALUE;
   const pos = randomFreePosition(state, radius + 3);
   return {
@@ -369,13 +368,20 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
   const snake = state.snakes.find((s) => s.id === snakeId);
   if (!snake || !snake.isAlive) return;
 
-  const m = clamp(len(stick), 0, 1);
-  snake.steerStrength = m;
-  if (m < 0.12) {
+  // ✅ 更跟手：降低死区 + 重新映射力度（避免“摇杆推不动 / 转向延迟大”）
+  const DEAD = 0.06; // normalized
+  const raw = clamp(len(stick), 0, 1);
+
+  if (raw < DEAD) {
+    snake.steerStrength = 0;
     // neutral => keep current heading (no extra turning)
     snake.targetAngle = snake.angle;
     return;
   }
+
+  const strength = clamp((raw - DEAD) / (1 - DEAD), 0, 1);
+  snake.steerStrength = strength;
+
   const v = norm(stick);
   snake.targetAngle = Math.atan2(v.y, v.x);
 }
@@ -410,6 +416,48 @@ export function releaseClientSnakes(state: GameState, clientId: string) {
     }
   }
 }
+
+/**
+ * 多人联机：为某个客户端生成“专属玩家蛇”（不再需要自由接管 AI 蛇）。
+ * - 如果客户端已有一条存活蛇，则复用。
+ * - 新蛇随机出生在世界中部区域，避免贴墙秒死。
+ */
+export function spawnPlayerSnake(state: GameState, clientId: string, playerName: string): string {
+  const existing = state.snakes.find((s) => s.isAlive && s.controlledBy === clientId);
+  if (existing) {
+    existing.isPlayer = true;
+    existing.playerName = playerName;
+    existing.controlledBy = clientId;
+    return existing.id;
+  }
+
+  const id = `p-${clientId.slice(0, 8)}-${Date.now().toString(16)}`;
+  const pos: Vec2 = {
+    x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
+    y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
+  };
+  const angle = randomRange(-Math.PI, Math.PI);
+
+  state.snakes.push(
+    createSnake({
+      id,
+      position: pos,
+      color: pick(SNAKE_COLORS),
+      isPlayer: true,
+      angle,
+      controlledBy: clientId,
+      playerName,
+    })
+  );
+
+  return id;
+}
+
+/** 断线/离开：移除该客户端控制的玩家蛇（避免“幽灵玩家”占坑） */
+export function removeClientPlayers(state: GameState, clientId: string) {
+  state.snakes = state.snakes.filter((s) => s.controlledBy !== clientId);
+}
+
 
 // ---------------------------------------------------------------------------
 // Update loop
@@ -538,7 +586,7 @@ export function updateGame(state: GameState, dtMs: number) {
     const head = s.body[0];
     for (let i = state.food.length - 1; i >= 0; i--) {
       const f = state.food[i];
-      if (dist(head, f.position) < s.radius + f.radius) {
+      if (dist(head, f.position) < s.radius + f.radius + 2) {
         s.length += f.value;
         s.score += Math.round(f.value);
         state.food.splice(i, 1);

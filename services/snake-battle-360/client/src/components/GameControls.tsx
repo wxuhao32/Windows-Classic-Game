@@ -3,16 +3,18 @@
  * 设计哲学：现代竞技游戏风格，提供清晰的游戏控制选项
  */
 
-import { Button } from '@/components/ui/button';
-import { useRef, type SyntheticEvent } from 'react';
-import { Pause, Play, RotateCcw, Home } from 'lucide-react';
-import { GameState } from '@/lib/gameEngine';
+import { Button } from "@/components/ui/button";
+import { useRef, type SyntheticEvent } from "react";
+import { Pause, Play, RotateCcw, Home, Maximize2, Minimize2 } from "lucide-react";
+import { GameState } from "@/lib/gameEngine";
 
 interface GameControlsProps {
   gameState: GameState;
   onPauseToggle: () => void;
   onRestart: () => void;
   onHome: () => void;
+  onFullscreenToggle?: () => void;
+  isFullscreen?: boolean;
   hidePause?: boolean;
 }
 
@@ -21,6 +23,8 @@ export function GameControls({
   onPauseToggle,
   onRestart,
   onHome,
+  onFullscreenToggle,
+  isFullscreen,
   hidePause,
 }: GameControlsProps) {
   // 手机上的 click 有时会有延迟或被覆盖；这里用 pointerdown 立即响应，并做防抖避免重复触发。
@@ -42,8 +46,8 @@ export function GameControls({
           disabled={!gameState.isRunning}
           className="bg-[#00ffff] text-[#0f1419] hover:bg-[#00ffff]/80 font-bold uppercase tracking-wider w-full md:w-auto"
           size="lg"
-          style={{ touchAction: 'manipulation' }}
-          >
+          style={{ touchAction: "manipulation" }}
+        >
           {gameState.isPaused ? (
             <>
               <Play className="w-4 h-4 mr-2" />
@@ -63,7 +67,7 @@ export function GameControls({
         onClick={wrap(onRestart)}
         className="bg-[#ff6600] text-[#0f1419] hover:bg-[#ff6600]/80 font-bold uppercase tracking-wider w-full md:w-auto"
         size="lg"
-        style={{ touchAction: 'manipulation' }}
+        style={{ touchAction: "manipulation" }}
       >
         <RotateCcw className="w-4 h-4 mr-2" />
         重新开始
@@ -75,11 +79,34 @@ export function GameControls({
         variant="outline"
         className="border-[#00ff88] text-[#00ff88] hover:bg-[#00ff88]/10 font-bold uppercase tracking-wider w-full md:w-auto"
         size="lg"
-        style={{ touchAction: 'manipulation' }}
+        style={{ touchAction: "manipulation" }}
       >
         <Home className="w-4 h-4 mr-2" />
         返回主菜单
       </Button>
+
+      {onFullscreenToggle && (
+        <Button
+          onPointerDown={wrap(onFullscreenToggle)}
+          onClick={wrap(onFullscreenToggle)}
+          variant="outline"
+          className="border-white/30 text-white hover:bg-white/10 font-bold uppercase tracking-wider w-full md:w-auto"
+          size="lg"
+          style={{ touchAction: "manipulation" }}
+        >
+          {isFullscreen ? (
+            <>
+              <Minimize2 className="w-4 h-4 mr-2" />
+              退出全屏
+            </>
+          ) : (
+            <>
+              <Maximize2 className="w-4 h-4 mr-2" />
+              全屏
+            </>
+          )}
+        </Button>
+      )}
 
       {!gameState.isRunning && (
         <div className="md:ml-4 flex items-center px-4 py-2 bg-[#ff3333]/20 border-2 border-[#ff3333] rounded-lg">

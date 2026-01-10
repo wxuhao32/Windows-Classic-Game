@@ -39,9 +39,11 @@
 
   <script>
     const STORAGE_KEY = "snake_battle_360_url";
-    const DEFAULT_URL = "http://localhost:3000"; // 本地开发默认（启动 services/snake-battle-360 后）
+    const DEFAULT_URL = "https://tanchishe-ezxi.onrender.com"; // 本地开发默认（启动 services/snake-battle-360 后）
 
     const input = document.getElementById("url");
+    const bar = document.querySelector(".bar");
+    const wrap = document.querySelector(".wrap");
     const frame = document.getElementById("frame");
     const hint = document.getElementById("hint");
     const save = document.getElementById("save");
@@ -73,6 +75,12 @@
 
     const saved = normalize(localStorage.getItem(STORAGE_KEY));
     const urlFromQuery = new URL(location.href).searchParams.get("url");
+
+    // 如果通过大厅传入 url，则默认隐藏配置栏，避免遮挡游戏界面
+    if (urlFromQuery && bar && wrap) {
+      bar.style.display = "none";
+      wrap.style.paddingTop = "0";
+    }
     const initial = normalize(urlFromQuery || saved || DEFAULT_URL);
     input.value = initial;
 
