@@ -14,9 +14,15 @@ function clamp(n: number, a: number, b: number) {
 export function VirtualJoystick({
   side,
   onStick,
+  placement = "overlay",
 }: {
   side: "left" | "right";
   onStick: (stick: Stick) => void;
+  /**
+   * overlay: positioned over the playfield (needed in fullscreen)
+   * dock: rendered outside the playfield in normal page flow
+   */
+  placement?: "overlay" | "dock";
 }) {
   const pointerIdRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -32,12 +38,7 @@ export function VirtualJoystick({
   const dead = 0.06; // normalized
 
   const containerStyle = useMemo(() => {
-    const common: React.CSSProperties = {
-      // IMPORTANT: keep the joystick inside the playfield subtree.
-      // When the playfield enters fullscreen, only its descendants are visible.
-      // Using absolute makes it work both in normal mode and fullscreen.
-      position: "absolute",
-      bottom: "max(18px, env(safe-area-inset-bottom))",
+    const base: React.CSSProperties = {
       width: 150,
       height: 150,
       zIndex: 50,
@@ -49,9 +50,29 @@ export function VirtualJoystick({
       touchAction: "none",
       userSelect: "none",
     };
+
+    if (placement === "dock") {
+      // In normal (non-fullscreen) mode, we render the joystick OUTSIDE the playfield
+      // so it doesn't block the game view.
+      return {
+        ...base,
+        position: "relative",
+        marginLeft: side === "left" ? 0 : "auto",
+        marginRight: side === "right" ? 0 : "auto",
+      };
+    }
+
+    // overlay
+    const common: React.CSSProperties = {
+      ...base,
+      // IMPORTANT: keep the joystick inside the playfield subtree.
+      // When the playfield enters fullscreen, only its descendants are visible.
+      position: "absolute",
+      bottom: "max(18px, env(safe-area-inset-bottom))",
+    };
     if (side === "left") return { ...common, left: 16 };
     return { ...common, right: 16 };
-  }, [side, active]);
+  }, [side, active, placement]);
 
   useEffect(() => {
     return () => {

@@ -727,11 +727,26 @@ if (msg.type === 'pause_proposal') {
               {isFullscreen ? '退出全屏' : '全屏'}
             </button>
 
-            {/* 手机：单摇杆（左下角）
-               NOTE: keep it INSIDE the playfield so it remains visible in fullscreen. */}
-            <VirtualJoystick side="left" onStick={handleStick} />
+            {/* 全屏时：摇杆必须在 playfield 子树里，否则浏览器全屏会把它裁掉 */}
+            {isFullscreen ? <VirtualJoystick placement="overlay" side="left" onStick={handleStick} /> : null}
           </div>
         </div>
+
+        {/* 非全屏：把摇杆放到游戏场地外（不挡视线） */}
+        {!isFullscreen ? (
+          <div className="flex justify-center -mt-2 mb-6 md:hidden">
+            <div className="w-full max-w-[900px]">
+              <div className="relative h-[170px] rounded-lg border border-white/10 bg-black/20 overflow-hidden">
+                <div className="absolute left-3 top-3 text-[11px] text-white/45 select-none pointer-events-none">
+                  摇杆区域
+                </div>
+                <div className="absolute left-3 bottom-2">
+                  <VirtualJoystick placement="dock" side="left" onStick={handleStick} />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* 游戏信息 */}
         <div className="mb-6">

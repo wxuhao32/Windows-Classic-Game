@@ -264,6 +264,11 @@ function drawSnake(ctx: CanvasRenderingContext2D, s: Snake) {
 export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // IMPORTANT: Do not restart the RAF loop on each gameState change.
+  // The game updates ~20fps; tearing down/recreating the canvas effect each update can
+  // look like "闪屏" on mobile. We keep the loop stable and read the latest state from a ref.
+  const latestStateRef = useRef<GameState>(gameState);
+
   const aRef = useRef<Snap | null>(null);
   const bRef = useRef<Snap | null>(null);
 
@@ -282,6 +287,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
 
   // update snapshot whenever prop changes (by reference)
   useEffect(() => {
+    latestStateRef.current = gameState;
     setSnap(gameState);
   }, [gameState]);
 
@@ -299,7 +305,9 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       display: "block",
       border: "none",
       borderRadius: fullscreen ? 0 : 18,
-      background: "rgba(0,0,0,0.10)",
+      // Use an opaque background to avoid mobile GPU/compositor flicker ("闪屏")
+      // when we clear/redraw every frame.
+      background: "#0f1419",
     };
     return base;
   }, [fullscreen]);
@@ -313,16 +321,35 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
     let raf = 0;
     let lastT = performance.now();
 
-    const resize = () => {
+    // Keep resizing centralized and stable.
+    // Resizing the canvas every frame can cause visible flicker on some mobile browsers.
+    const sizeRef = { dpr: 1, wCss: 0, hCss: 0 };
+    const ensureSize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const wCss = Math.max(1, rect.width);
+      const hCss = Math.max(1, rect.height);
+
+      // Only update if the CSS size meaningfully changes.
+      const changed =
+        Math.abs(wCss - sizeRef.wCss) > 0.5 ||
+        Math.abs(hCss - sizeRef.hCss) > 0.5 ||
+        Math.abs(dpr - sizeRef.dpr) > 0.01;
+
+      if (!changed) return;
+
+      sizeRef.dpr = dpr;
+      sizeRef.wCss = wCss;
+      sizeRef.hCss = hCss;
+
+      const w = Math.max(1, Math.floor(wCss * dpr));
+      const h = Math.max(1, Math.floor(hCss * dpr));
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
     };
 
-    resize();
-    const ro = new ResizeObserver(resize);
+    ensureSize();
+    const ro = new ResizeObserver(() => ensureSize());
     ro.observe(canvas);
 
     const INTERP_DELAY = 85; // ms
@@ -331,9 +358,15 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       const dt = t - lastT;
       lastT = t;
 
+      ensureSize();
+
+      const dpr = sizeRef.dpr;
+      const wCss = sizeRef.wCss || canvas.clientWidth;
+      const hCss = sizeRef.hCss || canvas.clientHeight;
+
       const a = aRef.current;
       const b = bRef.current;
-      let renderState = gameState;
+      let renderState = latestStateRef.current;
 
       if (a && b && b.t !== a.t) {
         const rt = Date.now() - INTERP_DELAY;
@@ -347,17 +380,10 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
         }
       }
 
-      const w = Math.max(1, Math.floor(canvas.clientWidth));
-      const h = Math.max(1, Math.floor(canvas.clientHeight));
-      const dpr = Math.max(1, Math.floor((window.devicePixelRatio || 1) * 100) / 100);
-      const needW = Math.floor(w * dpr);
-      const needH = Math.floor(h * dpr);
-      if (canvas.width !== needW || canvas.height !== needH) {
-        canvas.width = needW;
-        canvas.height = needH;
-      }
+      // Start each frame with an opaque fill (prevents compositor flashing).
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#0f1419";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       // Camera follow
@@ -388,14 +414,15 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       // IMPORTANT: do NOT subtract cam twice.
       // Correct transform: screen = center + scale * (world - cam)
       ctx.save();
-      const originX = Math.round((w / 2) * dpr) / dpr;
-      const originY = Math.round((h / 2) * dpr) / dpr;
+      // Use CSS pixels for camera origin, since ctx transform already accounts for dpr.
+      const originX = Math.round(wCss / 2);
+      const originY = Math.round(hCss / 2);
       ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
       ctx.translate(-cam.x, -cam.y);
 
       // background in world coordinates (simple)
-      drawBackground(ctx, renderState, cam, w, h);
+      drawBackground(ctx, renderState, cam, Math.floor(wCss), Math.floor(hCss));
 
       // bounds (subtle)
       ctx.save();
@@ -428,7 +455,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [gameState, mySnakeId, myStickRef]);
+  }, [mySnakeId, myStickRef]);
 
   return <canvas ref={canvasRef} style={style} />;
 }
