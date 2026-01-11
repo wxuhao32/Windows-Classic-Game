@@ -55,6 +55,28 @@ export default function Game() {
   }, []);
 
   const [gameState, setGameState] = useState<GameState>(() =>
+
+  // 控制面板回调（修复：之前被引用但未定义，导致运行时崩溃）
+  const handlePauseToggle = useCallback(() => {
+    setGameState((gs) => togglePause(gs));
+  }, []);
+
+  const handleRestart = useCallback(() => {
+    const arena = initializeArena();
+    setGameState(initializeGame(arena));
+  }, []);
+
+  const handleHome = useCallback(() => {
+    setLocation('/');
+  }, [setLocation]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  }, []);
     mode === 'online'
       ? initializeArena(GAME_WIDTH, GAME_HEIGHT, 4)
       : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
