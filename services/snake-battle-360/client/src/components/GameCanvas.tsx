@@ -364,12 +364,27 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       cam.y = lerp(cam.y, focus.y, followK);
       cam.scale = lerp(cam.scale, targetScale, followK);
 
+      // Clamp camera to world bounds so the player never goes off-screen (unless world is smaller than the viewport)
+      const halfW = w / (2 * cam.scale);
+      const halfH = h / (2 * cam.scale);
+      if (renderState.worldWidth > halfW * 2) {
+        cam.x = clamp(cam.x, halfW, renderState.worldWidth - halfW);
+      } else {
+        cam.x = renderState.worldWidth / 2;
+      }
+      if (renderState.worldHeight > halfH * 2) {
+        cam.y = clamp(cam.y, halfH, renderState.worldHeight - halfH);
+      } else {
+        cam.y = renderState.worldHeight / 2;
+      }
+
       // World -> screen
       ctx.save();
-      const originX = Math.round((w / 2 - cam.x * cam.scale) * dpr) / dpr;
-      const originY = Math.round((h / 2 - cam.y * cam.scale) * dpr) / dpr;
+      const originX = Math.round((w / 2) * dpr) / dpr;
+      const originY = Math.round((h / 2) * dpr) / dpr;
       ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
+      ctx.translate(-cam.x, -cam.y);
 
       // background in world coordinates (simple)
       drawBackground(ctx, renderState, cam, w, h);

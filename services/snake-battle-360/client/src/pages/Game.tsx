@@ -104,14 +104,6 @@ const { totalCount, aliveCount, rank, totalAlive, myLength } = hud;
   // SFX：不依赖外部素材，使用 WebAudio 生成（吃/死亡/暴涨提示）
   const sfxCtxRef = useRef<AudioContext | null>(null);
 
-// Fullscreen API: hides browser UI when supported (Android/desktop). iOS may be limited.
-useEffect(() => {
-  const onFs = () => {
-    const fs = !!document.fullscreenElement;
-    setIsFullscreen(fs);
-    document.body.style.overflow = fs ? "hidden" : "";
-  };
-  document.addEventListener("fullscreenchange", onFs);
   const isTouch = useMemo(() => {
     if (typeof window === 'undefined') return false;
     const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
@@ -119,8 +111,22 @@ useEffect(() => {
     return coarse || touch;
   }, []);
 
-  const compactUi = isFullscreen || isTouch;
+  // Fullscreen API: hides browser UI when supported (Android/desktop). iOS may be limited.
+  useEffect(() => {
+    const onFs = () => {
+      const fs = !!document.fullscreenElement;
+      setIsFullscreen(fs);
+      document.body.style.overflow = fs ? 'hidden' : '';
+    };
+    document.addEventListener('fullscreenchange', onFs);
+    onFs();
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      document.body.style.overflow = '';
+    };
+  }, []);
 
+  const compactUi = isFullscreen || isTouch;
   return (
     <div
       ref={gameRootRef}
