@@ -59,13 +59,26 @@ function rgba(hex: string, a: number) {
 }
 
 function getMySnake(state: GameState, mySnakeId: string | null | undefined) {
-  if (mySnakeId) return state.snakes.find((x) => x.id === mySnakeId) || null;
-  const c = state.snakes.find((x) => !!x.controlledBy && x.isAlive);
-  if (c) return c;
-  const p = state.snakes.find((x) => x.isPlayer && x.isAlive);
-  if (p) return p;
-  const a = state.snakes.find((x) => x.isAlive);
-  return a || null;
+  // If mySnakeId is set but points to a dead/empty/missing snake (e.g. after death/respawn/slot switch),
+  // don't early-return null; fall back to other heuristics so the camera keeps following the player.
+  const byId =
+    mySnakeId
+      ? state.snakes.find((x) => x.id === mySnakeId && x.isAlive && (x.body?.length ?? 0) > 0) || null
+      : null;
+  if (byId) return byId;
+
+  const byControlled = state.snakes.find((x) => !!x.controlledBy && x.isAlive && (x.body?.length ?? 0) > 0) || null;
+  if (byControlled) return byControlled;
+
+  const byPlayerFlag = state.snakes.find((x) => x.isPlayer && x.isAlive && (x.body?.length ?? 0) > 0) || null;
+  if (byPlayerFlag) return byPlayerFlag;
+
+  const anyAlive = state.snakes.find((x) => x.isAlive && (x.body?.length ?? 0) > 0) || null;
+  if (anyAlive) return anyAlive;
+
+  // Last resort: any snake with a body
+  const anyBody = state.snakes.find((x) => (x.body?.length ?? 0) > 0) || null;
+  return anyBody;
 }
 
 type Snap = { state: GameState; t: number };
@@ -254,7 +267,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
   const aRef = useRef<Snap | null>(null);
   const bRef = useRef<Snap | null>(null);
 
-  const camRef = useRef({ x: 0, y: 0, scale: 1 });
+  const camRef = useRef({ x: 0, y: 0, scale: 1, init: false });
 
   const setSnap = (s: GameState) => {
     const now = Date.now();
@@ -358,30 +371,28 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       const len = me?.length || 220;
       const targetScale = clamp(1 / (1 + len / 950), 0.34, 1.0);
 
-      const cam = camRef.current;
-      const followK = 1 - Math.pow(0.001, dt / 16.67);
-      cam.x = lerp(cam.x, focus.x, followK);
-      cam.y = lerp(cam.y, focus.y, followK);
-      cam.scale = lerp(cam.scale, targetScale, followK);
+            const cam = camRef.current;
+      // Snap camera on first frame (or after a long drift), so the player never starts off-screen.
+      const dx0 = focus.x - cam.x;
+      const dy0 = focus.y - cam.y;
+      const dist2 = dx0 * dx0 + dy0 * dy0;
+      const tooFar = dist2 > 1600 * 1600; // 1600px world distance threshold
 
-      // Clamp camera to world bounds so the player never goes off-screen (unless world is smaller than the viewport)
-      const halfW = w / (2 * cam.scale);
-      const halfH = h / (2 * cam.scale);
-      if (renderState.worldWidth > halfW * 2) {
-        cam.x = clamp(cam.x, halfW, renderState.worldWidth - halfW);
+      if (!cam.init || tooFar) {
+        cam.x = focus.x;
+        cam.y = focus.y;
+        cam.scale = targetScale;
+        cam.init = true;
       } else {
-        cam.x = renderState.worldWidth / 2;
+        const followK = 1 - Math.pow(0.001, dt / 16.67);
+        cam.x = lerp(cam.x, focus.x, followK);
+        cam.y = lerp(cam.y, focus.y, followK);
+        cam.scale = lerp(cam.scale, targetScale, followK);
       }
-      if (renderState.worldHeight > halfH * 2) {
-        cam.y = clamp(cam.y, halfH, renderState.worldHeight - halfH);
-      } else {
-        cam.y = renderState.worldHeight / 2;
-      }
-
-      // World -> screen
+// World -> screen
       ctx.save();
-      const originX = Math.round((w / 2) * dpr) / dpr;
-      const originY = Math.round((h / 2) * dpr) / dpr;
+      const originX = Math.round((w / 2 - cam.x * cam.scale) * dpr) / dpr;
+      const originY = Math.round((h / 2 - cam.y * cam.scale) * dpr) / dpr;
       ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
       ctx.translate(-cam.x, -cam.y);
