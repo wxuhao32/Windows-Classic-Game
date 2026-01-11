@@ -45,6 +45,49 @@ function getWsUrl() {
 export default function Game() {
   const [, setLocation] = useLocation();
 
+  // Fullscreen (desktop + most Android browsers; iOS Safari may be limited)
+  const fullscreenRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = fullscreenRef.current || document.documentElement;
+    const doc: any = document;
+
+    const current = doc.fullscreenElement || doc.webkitFullscreenElement;
+    if (!current) {
+      const req = (el as any).requestFullscreen || (el as any).webkitRequestFullscreen;
+      if (req) req.call(el);
+      return;
+    }
+    const exit = doc.exitFullscreen || doc.webkitExitFullscreen;
+    if (exit) exit.call(doc);
+  }, []);
+
+  useEffect(() => {
+    const doc: any = document;
+    const onChange = () => {
+      const current = doc.fullscreenElement || doc.webkitFullscreenElement;
+      setIsFullscreen(!!current);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    onChange();
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+  }, []);
+
+  // Prevent scrolling in fullscreen (helps mobile)
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    if (isFullscreen) document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isFullscreen]);
+
+
   const mode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('mode') === 'online' ? 'online' : 'offline';
@@ -481,6 +524,7 @@ if (msg.type === 'pause_proposal') {
 
   return (
     <div
+      ref={fullscreenRef}
       className="relative overflow-hidden min-h-[100dvh] text-[#e0e0e0] p-3 md:p-6 pb-36 md:pb-6"
       style={{
         backgroundImage: `url(/background/1.png)`,
@@ -640,6 +684,8 @@ if (msg.type === 'pause_proposal') {
             onPauseToggle={handlePauseToggle}
             onRestart={handleRestart}
             onHome={handleHome}
+            onFullscreenToggle={toggleFullscreen}
+            isFullscreen={isFullscreen}
             hidePause={false}
           />
         </div>
