@@ -370,7 +370,6 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
       const originY = Math.round((h / 2 - cam.y * cam.scale) * dpr) / dpr;
       ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
-      ctx.translate(-cam.x, -cam.y);
 
       // background in world coordinates (simple)
       drawBackground(ctx, renderState, cam, w, h);
