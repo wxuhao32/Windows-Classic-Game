@@ -112,431 +112,23 @@ useEffect(() => {
     document.body.style.overflow = fs ? "hidden" : "";
   };
   document.addEventListener("fullscreenchange", onFs);
-  return () => {
-    document.removeEventListener("fullscreenchange", onFs);
-    document.body.style.overflow = "";
-  };
-}, []);
-
-const toggleFullscreen = useCallback(async () => {
-  try {
-    if (!document.fullscreenElement) {
-      const el = gameRootRef.current ?? document.documentElement;
-      // @ts-ignore
-      await el.requestFullscreen?.({ navigationUI: "hide" });
-    } else {
-      await document.exitFullscreen();
-    }
-  } catch {
-    // ignore
-  }
-}, []);
-
-  const playSfx = useCallback(
-    (kind: "eat" | "big" | "death") => {
-      const ctx = sfxCtxRef.current;
-      if (!ctx || audioBlocked) return;
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      if (kind === "death") {
-        osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(220, now);
-        osc.frequency.exponentialRampToValueAtTime(70, now + 0.22);
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.exponentialRampToValueAtTime(0.22, now + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
-      } else if (kind === "big") {
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(520, now);
-        osc.frequency.exponentialRampToValueAtTime(760, now + 0.1);
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.exponentialRampToValueAtTime(0.18, now + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-      } else {
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(560, now);
-        osc.frequency.exponentialRampToValueAtTime(660, now + 0.05);
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.exponentialRampToValueAtTime(0.1, now + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
-      }
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + (kind === "death" ? 0.25 : kind === "big" ? 0.15 : 0.08));
-    },
-    [audioBlocked]
-  );
-
-  useEffect(() => {
-    const audio = new Audio(BGM_URL);
-    audio.loop = true;
-    // 手机上音量太大容易刺耳，这里默认稍微收敛点
-    audio.volume = 0.35;
-    audio.preload = 'auto';
-    audioRef.current = audio;
-
-    const shouldAuto = sessionStorage.getItem('snake_autoplay_audio') === '1';
-    if (shouldAuto) {
-      audio.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
-    } else {
-      setAudioBlocked(true);
-    }
-
-    return () => {
-      try {
-        audio.pause();
-        // 释放资源
-        audio.src = '';
-      } catch {
-        // ignore
-      }
-      audioRef.current = null;
-    };
+  const isTouch = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const touch = 'ontouchstart' in window || ((navigator as any).maxTouchPoints ?? 0) > 0;
+    return coarse || touch;
   }, []);
 
-  // 暂停时同步暂停 BGM（若用户已允许播放）
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (gameState.isPaused) {
-      audio.pause();
-    } else {
-      // 只有在用户允许后才尝试继续播放
-      if (!audioBlocked) {
-        audio.play().catch(() => {
-          // 可能因为浏览器策略被阻止
-          setAudioBlocked(true);
-        });
-      }
-    }
-  }, [gameState.isPaused, audioBlocked]);
-
-  const enableAudio = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    // Create/resume WebAudio context for SFX (must be user gesture)
-    if (!sfxCtxRef.current) {
-      try {
-        sfxCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch {
-        // ignore
-      }
-    }
-    sfxCtxRef.current?.resume().catch(() => void 0);
-    audio.play()
-      .then(() => {
-        setAudioBlocked(false);
-        sessionStorage.setItem('snake_autoplay_audio', '1');
-      })
-      .catch(() => {
-        toast.error('浏览器阻止了自动播放，请再点一次或检查静音/音量设置');
-      });
-  }, []);
-
-  // SFX hooks (based on state diffs)
-  const prevLenRef = useRef<number | null>(null);
-  const prevAliveRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    const meId = mode === "offline" ? "player" : mySnakeId;
-    if (!meId) return;
-    const me = gameState.snakes.find((s) => s.id === meId);
-    if (!me) return;
-
-    if (prevAliveRef.current === true && me.isAlive === false) {
-      playSfx("death");
-      if ("vibrate" in navigator) {
-        try { (navigator as any).vibrate([70, 30, 40]); } catch { /* ignore */ }
-      }
-    }
-
-    if (prevLenRef.current != null && me.isAlive) {
-      const delta = me.length - prevLenRef.current;
-      if (delta > 2) {
-        playSfx(delta > 80 ? "big" : "eat");
-      }
-    }
-
-    prevLenRef.current = me.length;
-    prevAliveRef.current = me.isAlive;
-  }, [gameState.snakes, mySnakeId, mode, playSfx]);
-  // 单机：游戏更新循环
-  useEffect(() => {
-    if (mode !== 'offline') return;
-    const interval = setInterval(() => {
-      setGameState((prevState) => {
-        const newState = { ...prevState };
-        updateGame(newState, UPDATE_INTERVAL);
-        return newState;
-      });
-    }, UPDATE_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, [mode]);
-
-  // 联机：连接 WS
-  useEffect(() => {
-    if (mode !== 'online') return;
-
-    let closed = false;
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room') || 'public';
-    const key = params.get('key') || '';
-    const name = params.get('name') || '';
-    const u = new URL(getWsUrl());
-    u.searchParams.set('room', room);
-    if (key) u.searchParams.set('key', key);
-    if (name) u.searchParams.set('name', name);
-    const ws = new WebSocket(u.toString());
-    wsRef.current = ws;
-    setWsStatus('connecting');
-
-    ws.onopen = () => {
-      if (closed) return;
-      setWsStatus('connected');
-      const hello: ClientToServerMessage = { type: 'hello', version: PROTOCOL_VERSION };
-      ws.send(JSON.stringify(hello));
-    };
-
-    ws.onerror = () => {
-      if (closed) return;
-      setWsStatus('error');
-      toast.error('联机连接失败（WS）');
-    };
-
-    ws.onmessage = (ev) => {
-      const raw = typeof ev.data === 'string' ? ev.data : '';
-      let msg: ServerToClientMessage | null = null;
-      try {
-        msg = JSON.parse(raw) as ServerToClientMessage;
-      } catch {
-        return;
-      }
-      if (!msg) return;
-
-      if (msg.type === 'welcome') {
-        setClientId(msg.clientId);
-        clientIdRef.current = msg.clientId;
-        setGameState(msg.state);
-        setMySnakeId(msg.mySnakeId || null);
-        setWsStatus('connected');
-        return;
-      }
-if (msg.type === 'state') {
-        setGameState(msg.state);
-        // Fallback: if for some reason we missed welcome
-        setMySnakeId((prev) => {
-          if (prev) return prev;
-          const mine = msg.state.snakes.find((s) => s.controlledBy === clientIdRef.current);
-          return mine?.id || null;
-        });
-        return;
-      }
-if (msg.type === 'pause_proposal') {
-        setPauseProposal(msg.proposal);
-        return;
-      }
-      if (msg.type === 'pause_result') {
-        setPauseProposal(null);
-        if (msg.accepted) {
-          toast.success(msg.action === 'pause' ? '已暂停' : '已继续');
-        } else {
-          toast(msg.reason ? `暂停请求未通过：${msg.reason}` : '暂停请求未通过');
-        }
-        return;
-      }
-      if (msg.type === 'info') {
-        toast(msg.message);
-        return;
-      }
-      if (msg.type === 'error') {
-        toast.error(msg.message);
-        return;
-      }
-    };
-
-    ws.onclose = () => {
-      if (closed) return;
-      setWsStatus('idle');
-      setPauseProposal(null);
-    };
-
-    return () => {
-      closed = true;
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
-      wsRef.current = null;
-    };
-  }, [mode]);
-
-  const sendWs = useCallback((msg: ClientToServerMessage) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify(msg));
-  }, []);
-
-  // 键盘控制（单机=本地修改；联机=发 input）
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-
-      const sendStick = (stick: { x: number; y: number }) => {
-        if (mode === 'offline') {
-          setGameState((prev) => {
-            setPlayerStick(prev, stick);
-            return prev;
-          });
-        } else {
-          sendWs({ type: 'input', stick });
-        }
-      };
-
-      switch (key) {
-        case 'arrowup':
-        case 'w':
-          e.preventDefault();
-          sendStick({ x: 0, y: -1 });
-          break;
-        case 'arrowdown':
-        case 's':
-          e.preventDefault();
-          sendStick({ x: 0, y: 1 });
-          break;
-        case 'arrowleft':
-        case 'a':
-          e.preventDefault();
-          sendStick({ x: -1, y: 0 });
-          break;
-        case 'arrowright':
-        case 'd':
-          e.preventDefault();
-          sendStick({ x: 1, y: 0 });
-          break;
-        case ' ':
-          e.preventDefault();
-          if (mode === 'offline') {
-            setGameState((prev) => {
-              togglePause(prev);
-              return prev;
-            });
-          } else {
-            // 联机：发起暂停/继续投票
-            sendWs({ type: 'pause_request', action: gameState.isPaused ? 'resume' : 'pause' });
-          }
-          break;
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(key)) {
-        // 回中立（不再施加额外转向）
-        if (mode === 'offline') {
-          setGameState((prev) => {
-            setPlayerStick(prev, { x: 0, y: 0 });
-            return prev;
-          });
-        } else {
-          sendWs({ type: 'input', stick: { x: 0, y: 0 } });
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [mode, sendWs, gameState.isPaused]);
-
-  const handlePauseToggle = useCallback(() => {
-    if (mode === 'offline') {
-      setGameState((prev) => {
-        togglePause(prev);
-        return prev;
-      });
-      return;
-    }
-    sendWs({ type: 'pause_request', action: gameState.isPaused ? 'resume' : 'pause' });
-  }, [mode, sendWs, gameState.isPaused]);
-
-  const handleRestart = useCallback(() => {
-    if (mode === 'online') {
-      sendWs({ type: 'restart' });
-      return;
-    }
-    setGameState(initializeGame(GAME_WIDTH, GAME_HEIGHT, 10));
-  }, [mode, sendWs]);
-
-  const handleHome = useCallback(() => {
-    setLocation('/');
-  }, [setLocation]);
-
-    const myPlayerName = useMemo(() => {
-    if (!mySnakeId) return null;
-    const s = gameState.snakes.find((x) => x.id === mySnakeId);
-    return s?.playerName || null;
-  }, [gameState.snakes, mySnakeId]);
-
-    const handleStick = useCallback(
-    (stick: { x: number; y: number }) => {
-      myStickRef.current = stick;
-
-      if (mode === 'offline') {
-        setGameState((prev) => {
-          setPlayerStick(prev, stick);
-          return prev;
-        });
-        return;
-      }
-
-      // Online: throttle input sending (~25Hz) to reduce jank / GC
-      pendingInputRef.current = stick;
-
-      const flush = () => {
-        inputRafRef.current = null;
-        const now = performance.now();
-        if (now - lastInputSentAtRef.current < 40) return; // 25Hz
-        lastInputSentAtRef.current = now;
-        sendWs({ type: 'input', stick: pendingInputRef.current });
-      };
-
-      if (inputRafRef.current == null) {
-        inputRafRef.current = requestAnimationFrame(flush);
-      }
-    },
-    [mode, sendWs]
-  );
-
-  const isEligibleToVote = useMemo(() => {
-    if (!pauseProposal || !clientId) return false;
-    return pauseProposal.eligible.some((e) => e.clientId === clientId);
-  }, [pauseProposal, clientId]);
-
-  const myVote = useMemo(() => {
-    if (!pauseProposal || !clientId) return null;
-    return pauseProposal.votes[clientId] ?? null;
-  }, [pauseProposal, clientId]);
-
-  const sendVote = useCallback(
-    (vote: PauseVote) => {
-      if (!pauseProposal) return;
-      sendWs({ type: 'pause_vote', requestId: pauseProposal.requestId, vote });
-    },
-    [pauseProposal, sendWs]
-  );
+  const compactUi = isFullscreen || isTouch;
 
   return (
-    <div ref={gameRootRef}
-      className={`relative overflow-hidden min-h-[100dvh] text-[#e0e0e0] p-3 md:p-6 ${isFullscreen ? "pb-0" : "pb-36"} md:pb-6`}
+    <div
+      ref={gameRootRef}
+      className={
+        isFullscreen
+          ? 'fixed inset-0 z-[999] overflow-hidden text-[#e0e0e0]'
+          : 'relative min-h-[100dvh] overflow-hidden text-[#e0e0e0] p-3 md:p-6'
+      }
       style={{
         backgroundImage: `url(/background/1.png)`,
         backgroundSize: 'cover',
@@ -546,9 +138,8 @@ if (msg.type === 'pause_proposal') {
     >
       {/* UI 叠一层暗色，避免背景影响可读性 */}
       <div className="absolute inset-0 bg-[#0f1419]/70 pointer-events-none" />
-      <div className="relative">
-      <div className="max-w-6xl mx-auto">
-        {/* 音乐提示 */}
+
+      <div className={isFullscreen ? 'relative w-full h-[100svh]' : 'relative max-w-6xl mx-auto'}>
         {audioBlocked && (
           <div className="mb-4 flex justify-center">
             <button
@@ -568,7 +159,6 @@ if (msg.type === 'pause_proposal') {
           </div>
         )}
 
-        {/* 联机暂停投票 */}
         {pauseProposal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/60" />
@@ -632,6 +222,10 @@ if (msg.type === 'pause_proposal') {
             </div>
           </div>
         )}
+
+        {/* 标题 / 联机信息：全屏与移动端隐藏，避免影响游戏区域 */}
+        {!compactUi && (
+          <>
         {/* 标题 */}
         <div className="text-center mb-8">
           <h1 className="text-4xl md:text-5xl font-black text-[#00ff88] mb-2 tracking-widest" style={{
@@ -645,74 +239,90 @@ if (msg.type === 'pause_proposal') {
               : '使用方向键或 WASD 控制蛇 · 空格暂停'}
           </p>
         </div>
+            {mode === 'online' && (
+              <div className="bg-[#1a1f2e] border-2 border-[#00ffff] rounded-lg p-4 mb-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="text-sm text-[#a0a0a0]">
+                    <span className="text-[#00ffff] font-bold">联机状态：</span>
+                    <span className={wsStatus === 'connected' ? 'text-[#00ff88]' : 'text-[#ff6600]'}>
+                      {wsStatus}
+                    </span>
+                    {clientId ? <span className="ml-3">ID: {clientId.slice(0, 6)}</span> : null}
+                  </div>
+                  <div className="text-sm text-[#a0a0a0]">
+                    <span className="text-[#00ffff] font-bold">我的蛇：</span>
+                    <span className="text-[#e0e0e0]">
+                      {mySnakeId ? `${mySnakeId}${myPlayerName ? `（${myPlayerName}）` : ''}` : '未接管'}
+                    </span>
+                  </div>
+                </div>
 
-        {/* 联机信息面板 */}
-        {mode === 'online' && (
-          <div className="bg-[#1a1f2e] border-2 border-[#00ffff] rounded-lg p-4 mb-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div className="text-sm text-[#a0a0a0]">
-                <span className="text-[#00ffff] font-bold">联机状态：</span>
-                <span className={wsStatus === 'connected' ? 'text-[#00ff88]' : 'text-[#ff6600]'}>
-                  {wsStatus}
-                </span>
-                {clientId ? <span className="ml-3">ID: {clientId.slice(0, 6)}</span> : null}
+                <div className="mt-4">
+                  <div className="text-[#a0a0a0] text-xs uppercase tracking-wider mb-2">联机规则</div>
+                  <div className="text-sm text-white/80 leading-relaxed">
+                    每位玩家进入房间后会<strong className="text-[#00ffff]">自动分配 1 条蛇</strong>（固定 4 条蛇同场）。
+                    当房间人数不足时，空位由 AI 接管，不会出现外部玩家自由接管干扰。
+                  </div>
+                </div>
               </div>
-              <div className="text-sm text-[#a0a0a0]">
-                <span className="text-[#00ffff] font-bold">我的蛇：</span>
-                <span className="text-[#e0e0e0]">
-                  {mySnakeId ? `${mySnakeId}${myPlayerName ? `（${myPlayerName}）` : ''}` : '未接管'}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-[#a0a0a0] text-xs uppercase tracking-wider mb-2">
-                联机规则
-              </div>
-              <div className="text-sm text-white/80 leading-relaxed">
-                每位玩家进入房间后会<strong className="text-[#00ffff]">自动分配 1 条蛇</strong>（固定 4 条蛇同场）。
-                当房间人数不足时，空位由 AI 接管，不会出现外部玩家自由接管干扰。
-              </div>
-            </div>
-
-            </div>
+            )}
+          </>
         )}
 
-{/* 游戏画布（HUD/摇杆均叠加在场地上，避免全屏布局混乱） */}
-<div className="flex justify-center mb-6">
-  <div className="relative w-full max-w-[980px]">
-    <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
-    {/* HUD：左上角小字高透明度 */}
-    <div
-      className="absolute left-3 top-3 text-[11px] leading-4 text-white/70 bg-black/25 rounded px-2 py-1"
-      style={{ pointerEvents: "none" }}
-    >
-      <div>存活：{aliveCount}/{totalCount}</div>
-      <div>排名：{rank}/{totalAlive}</div>
-      <div>长度：{myLength}</div>
-    </div>
-  </div>
-</div>
+        {/* 游戏画布（HUD/按钮/摇杆均叠加在场地上） */}
+        <div className={isFullscreen ? 'relative w-full h-[100svh]' : 'flex justify-center mb-6'}>
+          <div className={'relative w-full ' + (isFullscreen ? 'h-full' : 'max-w-[980px]')}>
+            <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} fullscreen={isFullscreen} />
 
-        {/* 游戏信息（全屏时隐藏，避免挤压场地） */}
-        {!isFullscreen && (
+            {/* HUD：左上角小字高透明度 */}
+            <div
+              className="absolute left-3 top-3 text-[11px] leading-4 text-white/70 bg-black/25 rounded px-2 py-1"
+              style={{ pointerEvents: 'none' }}
+            >
+              <div>存活：{aliveCount}/{totalCount}</div>
+              <div>排名：{rank}/{totalAlive}</div>
+              <div>长度：{myLength}</div>
+            </div>
+
+            {/* 全屏按钮：置于顶部右侧 */}
+            <button
+              onPointerDown={(e) => {
+                e.preventDefault();
+                toggleFullscreen();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                toggleFullscreen();
+              }}
+              className="absolute right-3 top-3 px-3 py-1.5 rounded-lg bg-black/45 border border-white/15 text-white/85 text-xs"
+              style={{ touchAction: 'manipulation' }}
+            >
+              {isFullscreen ? '退出全屏' : '全屏'}
+            </button>
+          </div>
+        </div>
+
+        {/* 详细面板：移动端与全屏隐藏 */}
+        {!compactUi && (
           <div className="mb-6">
             <GameInfo gameState={gameState} mySnakeId={mySnakeId} />
           </div>
         )}
 
-        {/* 游戏控制 */}
-        <div className="mb-6">
-          <GameControls
-            gameState={gameState}
-            onPauseToggle={handlePauseToggle}
-            onRestart={handleRestart}
-            onHome={handleHome}
-            onFullscreenToggle={toggleFullscreen}
-            isFullscreen={isFullscreen}
-            hidePause={false}
-          />
-        </div>
+        {/* 控制条：全屏隐藏 */}
+        {!isFullscreen && (
+          <div className={isTouch ? 'mb-24' : 'mb-6'}>
+            <GameControls
+              gameState={gameState}
+              onPauseToggle={handlePauseToggle}
+              onRestart={handleRestart}
+              onHome={handleHome}
+              onFullscreenToggle={toggleFullscreen}
+              isFullscreen={isFullscreen}
+              hidePause={false}
+            />
+          </div>
+        )}
 
         {/* 游戏说明 */}
         <div className="bg-[#1a1f2e] border-2 border-[#404854] rounded-lg p-4 md:p-6 mt-8 hidden md:block">
@@ -737,13 +347,11 @@ if (msg.type === 'pause_proposal') {
             </div>
           </div>
         </div>
-      </div>
 
-        )}
+      </div>
 
       {/* 手机：单摇杆（左手） */}
-      <VirtualJoystick side="left" onStick={handleStick} />
-      </div>
+      {isTouch && <VirtualJoystick side="left" onStick={handleStick} />}
     </div>
   );
 }

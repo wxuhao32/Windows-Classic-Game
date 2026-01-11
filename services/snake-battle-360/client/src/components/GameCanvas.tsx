@@ -15,6 +15,7 @@ type Props = {
   gameState: GameState;
   mySnakeId?: string | null;
   myStickRef?: MutableRefObject<Stick>;
+  fullscreen?: boolean;
 };
 
 const BG_URL = "/background/1.png";
@@ -247,7 +248,7 @@ function drawSnake(ctx: CanvasRenderingContext2D, s: Snake) {
   ctx.restore();
 }
 
-export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
+export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const aRef = useRef<Snap | null>(null);
@@ -277,14 +278,23 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
   }, []);
 
   const style = useMemo(() => {
+  if (fullscreen) {
     return {
-      width: "min(100%, 980px)",
-      height: "min(78vh, 720px)",
-      borderRadius: 18,
-      border: "1px solid rgba(255,255,255,0.10)",
+      width: "100%",
+      height: "100%",
+      borderRadius: 0,
+      border: "none",
       background: "rgba(0,0,0,0.10)",
     } as React.CSSProperties;
-  }, []);
+  }
+  return {
+    width: "min(100%, 980px)",
+    height: "min(78vh, 720px)",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.10)",
+  } as React.CSSProperties;
+}, [fullscreen]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
