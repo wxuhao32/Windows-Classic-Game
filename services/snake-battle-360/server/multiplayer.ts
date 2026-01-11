@@ -3,10 +3,10 @@ import { nanoid } from "nanoid";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import {
+  claimSnake,
   initializeArena,
-  removeClientPlayers,
+  releaseClientSnakes,
   setSnakeStick,
-  spawnPlayerSnake,
   updateGame,
   type GameState,
   type Vec2,
@@ -15,31 +15,35 @@ import {
   PROTOCOL_VERSION,
   safeJsonParse,
   type ClientToServerMessage,
-  type ServerToClientMessage,
-  type PauseAction,
   type PauseProposal,
   type PauseVote,
+  type ServerToClientMessage,
 } from "../shared/protocol.ts";
 
-// Viewport (client canvas). The actual world is much larger and defined in shared/gameEngine.
+// -----------------------------------------------------------------------------
+// Multiplayer goals (v5)
+// - 每个房间固定最多 4 条蛇（真人 + AI 总数恒为 4）
+// - 连接时通过 room/key/name 进入私密房间
+// - 服务端 30Hz 权威模拟，20Hz 快照广播（每客户端定制：只发视野附近食物 + 压缩蛇身体点）
+// - 暂停/继续需要房间内所有真人玩家投票
+// -----------------------------------------------------------------------------
+
 const VIEW_WIDTH = 800;
 const VIEW_HEIGHT = 600;
 
-// Baseline AI count (players are additional)
-const AI_SNAKE_COUNT = 12;
+const MAX_PLAYERS = 4;
+const SNAKE_COUNT = 4;
 
-// Server simulation tick (≈30Hz)
-const TICK_MS = 33;
+const TICK_MS = 33; // 约 30Hz
+const SNAPSHOT_MS = 50; // 20Hz
 
-// Network snapshot rate (lower than sim to reduce JSON parse/GC stutter)
-const BROADCAST_MS = 50; // ≈20Hz
-
-// Send only nearby food to each client (big win vs sending 600+ particles each tick)
-const FOOD_VIEW_RADIUS = 2200;
+const FOOD_VIEW_RADIUS = 1200;
+const FOOD_MAX_PER_CLIENT = 240;
 
 type Client = {
   id: string;
   ws: WebSocket;
+  snakeId: string;
 };
 
 type PauseVoteState = {
@@ -48,165 +52,206 @@ type PauseVoteState = {
 
 type Room = {
   id: string;
-  key: string; // "" = no password (public)
+  key: string;
   state: GameState;
-  lastEndedAt: number | null;
-  pauseVoteState: PauseVoteState | null;
-
   clients: Map<string, Client>;
   clientName: Map<string, string>;
   nextPlayerNumber: number;
+  pauseVoteState: PauseVoteState | null;
+  timer: NodeJS.Timeout;
+  lastBroadcastAt: number;
+  lastEndedAt: number | null;
+  lastTickAt: number;
 };
 
-function normalizeRoomId(raw: string | null | undefined) {
-  const r = (raw || "").trim();
-  return r ? r.slice(0, 64) : "public";
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
 }
 
-function normalizeKey(raw: string | null | undefined) {
-  return (raw || "").trim().slice(0, 64);
-}
-
-function normalizeName(raw: string | null | undefined) {
-  const n = (raw || "").trim();
-  return n ? n.slice(0, 24) : "";
-}
-
-function parseReqQuery(req: IncomingMessage) {
-  const u = new URL(req.url || "/ws", "http://local");
-  const p = u.searchParams;
-  return {
-    roomId: normalizeRoomId(p.get("room")),
-    key: normalizeKey(p.get("key")),
-    name: normalizeName(p.get("name")),
-  };
-}
-
-function dist2(a: { x: number; y: number }, b: { x: number; y: number }) {
+function dist(a: Vec2, b: Vec2) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
-  return dx * dx + dy * dy;
+  return Math.hypot(dx, dy);
+}
+
+function send(ws: WebSocket, msg: ServerToClientMessage) {
+  if (ws.readyState !== ws.OPEN) return;
+  ws.send(JSON.stringify(msg));
+}
+
+function parseRoomParams(req: IncomingMessage) {
+  // req.url like: /ws?room=ABCD&key=123&name=Nick
+  const u = new URL(req.url ?? "/ws", "http://localhost");
+  const room = (u.searchParams.get("room") || "public").trim();
+  const key = (u.searchParams.get("key") || "").trim();
+  const name = (u.searchParams.get("name") || "").trim();
+
+  const roomId = room.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "public";
+  const roomKey = key.slice(0, 24);
+  const playerName = (name || "").replace(/[\r\n\t]/g, "").slice(0, 16);
+
+  return { roomId, roomKey, playerName };
+}
+
+// Compress a snake polyline for network / render. Keeps head & tail.
+function compressBody<T extends { x: number; y: number }>(body: T[], maxPoints: number) {
+  if (body.length <= maxPoints) return body;
+  const stride = Math.max(1, Math.floor(body.length / maxPoints));
+  const out: T[] = [];
+  for (let i = 0; i < body.length; i += stride) out.push(body[i]);
+  // ensure tail included
+  const tail = body[body.length - 1];
+  if (out[out.length - 1] !== tail) out.push(tail);
+  return out;
+}
+
+function makeClientState(room: Room, client: Client): GameState {
+  const state = room.state;
+
+  const me = state.snakes.find((s) => s.id === client.snakeId);
+  const head = me?.body?.[0] ?? { x: state.worldWidth / 2, y: state.worldHeight / 2 };
+
+  // Filter food by view radius; cap count to avoid JSON blow-up.
+  const visibleFood = state.food
+    .filter((f) => dist(f.position, head) < FOOD_VIEW_RADIUS)
+    .slice(0, FOOD_MAX_PER_CLIENT);
+
+  const snakes = state.snakes.map((s) => {
+    const maxPts = s.id === client.snakeId ? 220 : 140;
+    return {
+      ...s,
+      body: compressBody(s.body, maxPts),
+    };
+  });
+
+  // Keep rest of state fields
+  return {
+    ...state,
+    snakes,
+    food: visibleFood,
+  };
 }
 
 export function setupMultiplayer(server: HttpServer) {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
   const rooms = new Map<string, Room>();
-  const pending = new Map<string, Client>(); // connected but not joined yet
-  const clientRoom = new Map<string, string>(); // clientId -> roomId
 
-  const getOrCreateRoom = (roomId: string, key: string): Room | null => {
-    const id = normalizeRoomId(roomId);
-    const k = normalizeKey(key);
-    const existing = rooms.get(id);
-    if (existing) {
-      // password protected room must match
-      if (existing.key && existing.key !== k) return null;
-      // if room is public, ignore provided key (do not block)
-      return existing;
-    }
+  const ensureRoom = (roomId: string, key: string): Room => {
+    let room = rooms.get(roomId);
+    if (room) return room;
 
-    // create new room (first joiner defines password)
-    const room: Room = {
-      id,
-      key: k,
-      state: initializeArena(VIEW_WIDTH, VIEW_HEIGHT, AI_SNAKE_COUNT),
-      lastEndedAt: null,
-      pauseVoteState: null,
+    const state = initializeArena(VIEW_WIDTH, VIEW_HEIGHT, SNAKE_COUNT);
+    // 固定蛇池：期望数量 = 4
+    state.desiredSnakeCount = SNAKE_COUNT;
+
+    room = {
+      id: roomId,
+      key,
+      state,
       clients: new Map(),
       clientName: new Map(),
       nextPlayerNumber: 1,
+      pauseVoteState: null,
+      timer: null as any,
+      lastBroadcastAt: 0,
+      lastEndedAt: null,
+      lastTickAt: Date.now(),
     };
-    room.state.desiredSnakeCount = AI_SNAKE_COUNT;
-    rooms.set(id, room);
-    return room;
-  };
 
-  const send = (ws: WebSocket, msg: ServerToClientMessage) => {
-    if (ws.readyState !== ws.OPEN) return;
-    ws.send(JSON.stringify(msg));
+    // Room tick loop
+    room.timer = setInterval(() => {
+      const now = Date.now();
+
+      // Pause vote resolution
+      if (room.pauseVoteState) {
+        maybeResolvePauseProposal(room);
+        if (room.pauseVoteState) {
+          broadcast(room, { type: "pause_proposal", proposal: room.pauseVoteState.proposal });
+        }
+      }
+
+      // Auto restart after end
+      if (!room.state.isRunning) {
+        if (room.lastEndedAt === null) room.lastEndedAt = now;
+        if (now - room.lastEndedAt > 2500) {
+          // Re-init state
+          room.state = initializeArena(VIEW_WIDTH, VIEW_HEIGHT, SNAKE_COUNT);
+          room.state.desiredSnakeCount = SNAKE_COUNT;
+          room.lastEndedAt = null;
+
+          // Re-claim snakes for connected clients (keep stable seats)
+          const freeSnakes = room.state.snakes.slice();
+          for (const c of room.clients.values()) {
+            const name = room.clientName.get(c.id) || `玩家${room.nextPlayerNumber++}`;
+            const s = freeSnakes.shift();
+            if (s) {
+              claimSnake(room.state, s.id, c.id, name);
+              c.snakeId = s.id;
+            }
+          }
+          broadcast(room, { type: "info", message: "新一局开始！" });
+        }
+      }
+
+      // Authoritative update
+      const dt = clamp(now - room.lastTickAt, 1, 50);
+      room.lastTickAt = now;
+      if (room.state.isRunning && !room.state.isPaused) {
+        updateGame(room.state, dt);
+      } else {
+        // keep time moving for animations
+        room.state.gameTime += dt;
+      }
+
+      // Snapshot broadcast
+      if (now - room.lastBroadcastAt >= SNAPSHOT_MS) {
+        room.lastBroadcastAt = now;
+        for (const c of room.clients.values()) {
+          send(c.ws, { type: "state", state: makeClientState(room, c) });
+        }
+      }
+    }, TICK_MS);
+
+    rooms.set(roomId, room);
+    return room;
   };
 
   const broadcast = (room: Room, msg: ServerToClientMessage) => {
     const payload = JSON.stringify(msg);
+    for (const client of room.clients.values()) {
+      if (client.ws.readyState === client.ws.OPEN) {
+        client.ws.send(payload);
+      }
+    }
+  };
+
+  const getEligiblePlayers = (room: Room) => {
+    const eligible = [];
     for (const c of room.clients.values()) {
-      if (c.ws.readyState === c.ws.OPEN) c.ws.send(payload);
+      eligible.push({
+        clientId: c.id,
+        playerName: room.clientName.get(c.id) || "玩家",
+      });
     }
-  };
-
-  const getClientSnakeHead = (room: Room, clientId: string) => {
-    const s = room.state.snakes.find((sn) => sn.controlledBy === clientId && sn.isAlive);
-    return s?.body?.[0] ?? { x: room.state.worldWidth / 2, y: room.state.worldHeight / 2 };
-  };
-
-  const buildStateForClient = (room: Room, clientId: string): GameState => {
-    const focus = getClientSnakeHead(room, clientId);
-    const r2 = FOOD_VIEW_RADIUS * FOOD_VIEW_RADIUS;
-
-    // Keep only nearby food and strip physics-only fields to reduce payload.
-    const food = room.state.food
-      .filter((f) => dist2(f.position, focus) <= r2)
-      .map((f) => ({
-        id: f.id,
-        position: f.position,
-        radius: f.radius,
-        value: f.value,
-        kind: f.kind,
-        color: f.color,
-        createdAt: f.createdAt, // important for client pulse animation
-      })) as any;
-
-    // Note: snakes are still full so leaderboard/camera remain consistent.
-    return { ...room.state, food } as any;
-  };
-
-  const sendStateToRoom = (room: Room) => {
-    for (const [clientId, c] of room.clients.entries()) {
-      if (c.ws.readyState !== c.ws.OPEN) continue;
-      const state = buildStateForClient(room, clientId);
-      c.ws.send(JSON.stringify({ type: "state", state } satisfies ServerToClientMessage));
-    }
-  };
-
-  const getClientControlledSnakeId = (room: Room, clientId: string): string | null => {
-    const s = room.state.snakes.find((sn) => sn.controlledBy === clientId && sn.isAlive);
-    return s ? s.id : null;
-  };
-
-  // Pause voting: require ALL connected human players (clients) to vote, even if their snake is dead.
-  const getRoomVoters = (room: Room) => {
-    return Array.from(room.clients.keys()).map((cid) => ({
-      clientId: cid,
-      playerName: room.clientName.get(cid) || "玩家",
-      snakeId: getClientControlledSnakeId(room, cid),
-    }));
-  };
-
-  const broadcastPauseProposal = (room: Room) => {
-    if (!room.pauseVoteState) return;
-    broadcast(room, { type: "pause_proposal", proposal: room.pauseVoteState.proposal });
-  };
-
-  const clearPauseProposal = (room: Room, result: { accepted: boolean; reason?: string }) => {
-    if (!room.pauseVoteState) return;
-    const { requestId, action } = room.pauseVoteState.proposal;
-    room.pauseVoteState = null;
-    broadcast(room, { type: "pause_result", requestId, action, accepted: result.accepted, reason: result.reason });
+    return eligible;
   };
 
   const maybeResolvePauseProposal = (room: Room) => {
-    if (!room.pauseVoteState) return;
-    const p = room.pauseVoteState.proposal;
+    const vs = room.pauseVoteState;
+    if (!vs) return;
+    const p = vs.proposal;
+
     const now = Date.now();
     if (now > p.expiresAt) {
-      clearPauseProposal(room, { accepted: false, reason: "投票超时" });
+      room.pauseVoteState = null;
+      broadcast(room, { type: "pause_result", requestId: p.requestId, action: p.action, accepted: false, reason: "投票超时" });
       return;
     }
 
-    // if participants changed (disconnect), shrink eligible to current clients
-    const current = getRoomVoters(room);
-    const currentIds = new Set(current.map((x) => x.clientId));
-    const nextEligible = p.eligible.filter((x) => currentIds.has(x.clientId));
+    // shrink eligible if someone left
+    const current = new Set(Array.from(room.clients.keys()));
+    const nextEligible = p.eligible.filter((e) => current.has(e.clientId));
     if (nextEligible.length !== p.eligible.length) {
       p.eligible = nextEligible;
       const nextVotes: Record<string, PauseVote | null> = {};
@@ -214,202 +259,161 @@ export function setupMultiplayer(server: HttpServer) {
       p.votes = nextVotes;
     }
 
-    // any reject => fail
+    // reject immediately if any reject
     for (const cid of Object.keys(p.votes)) {
       if (p.votes[cid] === "reject") {
-        clearPauseProposal(room, { accepted: false, reason: "有玩家拒绝" });
+        room.pauseVoteState = null;
+        broadcast(room, { type: "pause_result", requestId: p.requestId, action: p.action, accepted: false, reason: "有玩家拒绝" });
         return;
       }
     }
 
-    // all accept => apply
     const allAccepted = Object.keys(p.votes).length > 0 && Object.values(p.votes).every((v) => v === "accept");
     if (allAccepted) {
       room.state.isPaused = p.action === "pause";
-      clearPauseProposal(room, { accepted: true });
-      sendStateToRoom(room);
+      room.pauseVoteState = null;
+      broadcast(room, { type: "pause_result", requestId: p.requestId, action: p.action, accepted: true });
       broadcast(room, { type: "info", message: p.action === "pause" ? "游戏已暂停" : "游戏已继续" });
+      // broadcast a state immediately
+      for (const c of room.clients.values()) {
+        send(c.ws, { type: "state", state: makeClientState(room, c) });
+      }
     }
   };
 
-  // Simulation tick: authoritative update of every room
-  const simTimer = setInterval(() => {
-    for (const room of rooms.values()) {
-      if (room.pauseVoteState) {
-        maybeResolvePauseProposal(room);
-        if (room.pauseVoteState) broadcastPauseProposal(room);
-      }
-
-      if (!room.state.isRunning) {
-        if (room.lastEndedAt == null) room.lastEndedAt = Date.now();
-        if (Date.now() - room.lastEndedAt > 3000) {
-          room.state = initializeArena(VIEW_WIDTH, VIEW_HEIGHT, AI_SNAKE_COUNT);
-          room.state.desiredSnakeCount = AI_SNAKE_COUNT + room.clients.size;
-          room.lastEndedAt = null;
-          room.pauseVoteState = null;
-          broadcast(room, { type: "info", message: "新一局开始！" });
-          sendStateToRoom(room);
-        }
-      } else if (!room.state.isPaused) {
-        room.state.desiredSnakeCount = AI_SNAKE_COUNT + room.clients.size;
-        updateGame(room.state, TICK_MS);
-      }
-    }
-  }, TICK_MS);
-
-  // Network snapshots: send state at a lower rate to reduce stutter
-  const netTimer = setInterval(() => {
-    for (const room of rooms.values()) {
-      sendStateToRoom(room);
-    }
-  }, BROADCAST_MS);
-
   wss.on("connection", (ws, req) => {
-    const clientId = nanoid();
-    const client: Client = { id: clientId, ws };
-    pending.set(clientId, client);
+    const { roomId, roomKey, playerName } = parseRoomParams(req);
+    const room = rooms.get(roomId) || ensureRoom(roomId, roomKey);
 
-    const qs = parseReqQuery(req);
+    // key check (private room)
+    if ((room.key || "") !== (roomKey || "")) {
+      send(ws, { type: "error", message: "房间密码错误" });
+      ws.close();
+      return;
+    }
 
-    const sendError = (message: string) => send(ws, { type: "error", message });
+    if (room.clients.size >= MAX_PLAYERS) {
+      send(ws, { type: "error", message: "房间已满（最多 4 人）" });
+      ws.close();
+      return;
+    }
 
-    const doJoin = (roomId: string, key: string, name: string) => {
-      const room = getOrCreateRoom(roomId, key);
-      if (!room) {
-        sendError("房间号或密码错误（Key 不匹配）");
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-        return;
-      }
+    const clientId = nanoid(10);
 
-      // move from pending to room
-      pending.delete(clientId);
-      clientRoom.set(clientId, room.id);
-      room.clients.set(clientId, client);
+    // assign name
+    const name = playerName || `玩家${room.nextPlayerNumber++}`;
+    room.clientName.set(clientId, name);
 
-      const playerName = normalizeName(name) || `玩家${room.nextPlayerNumber++}`;
-      room.clientName.set(clientId, playerName);
+    // claim an available snake (fixed pool of 4)
+    const free = room.state.snakes.find((s) => s.isAlive && !s.controlledBy);
+    if (!free) {
+      send(ws, { type: "error", message: "没有可用的蛇位（请稍后重试）" });
+      ws.close();
+      return;
+    }
+    claimSnake(room.state, free.id, clientId, name);
 
-      // create dedicated player snake
-      const mySnakeId = spawnPlayerSnake(room.state, clientId, playerName);
+    const client: Client = { id: clientId, ws, snakeId: free.id };
+    room.clients.set(clientId, client);
 
-      send(ws, {
-        type: "welcome",
-        version: PROTOCOL_VERSION,
-        clientId,
-        roomId: room.id,
-        state: buildStateForClient(room, clientId),
-        mySnakeId,
-      });
-
-      broadcast(room, { type: "info", message: `${playerName} 加入了房间 ${room.id}` });
-      sendStateToRoom(room);
-    };
+    // welcome
+    send(ws, {
+      type: "welcome",
+      version: PROTOCOL_VERSION,
+      clientId,
+      roomId: room.id,
+      mySnakeId: client.snakeId,
+      maxPlayers: MAX_PLAYERS,
+      state: makeClientState(room, client),
+    });
+    broadcast(room, { type: "info", message: `${name} 加入房间（${room.clients.size}/${MAX_PLAYERS}）` });
 
     ws.on("message", (data) => {
       const raw = typeof data === "string" ? data : data.toString("utf-8");
       const msg = safeJsonParse<ClientToServerMessage>(raw);
       if (!msg || typeof msg !== "object" || !("type" in msg)) {
-        return sendError("Bad message");
+        return send(ws, { type: "error", message: "Bad message" });
       }
-
-      // which room am I in?
-      const rid = clientRoom.get(clientId);
-      const room = rid ? rooms.get(rid) : null;
 
       switch (msg.type) {
         case "hello": {
           if (msg.version !== PROTOCOL_VERSION) {
-            return sendError(`Protocol mismatch. Server=${PROTOCOL_VERSION}, Client=${msg.version}`);
+            send(ws, {
+              type: "error",
+              message: `Protocol mismatch. Server=${PROTOCOL_VERSION}, Client=${msg.version}`,
+            });
+            ws.close();
           }
-          // auto-join based on query (optional). Client may send join explicitly too.
-          if (!rid) doJoin(qs.roomId, qs.key, qs.name);
-          return;
-        }
-
-        case "join": {
-          if (rid) return; // already joined
-          doJoin(msg.roomId, normalizeKey(msg.key), normalizeName(msg.name));
           return;
         }
 
         case "input": {
-          if (!room) return;
-          const snakeId = getClientControlledSnakeId(room, clientId);
-          if (!snakeId) return;
-          const stick = msg.stick as Vec2;
-          setSnakeStick(room.state, snakeId, stick);
+          setSnakeStick(room.state, client.snakeId, msg.stick);
           return;
         }
 
         case "restart": {
-          if (!room) return;
-          room.state = initializeArena(VIEW_WIDTH, VIEW_HEIGHT, AI_SNAKE_COUNT);
-          room.state.desiredSnakeCount = AI_SNAKE_COUNT + room.clients.size;
-          room.lastEndedAt = null;
-          room.pauseVoteState = null;
+          // allow restart only when ended (or paused) to avoid griefing
+          if (room.state.isRunning) return;
+          room.state = initializeArena(VIEW_WIDTH, VIEW_HEIGHT, SNAKE_COUNT);
+          room.state.desiredSnakeCount = SNAKE_COUNT;
 
-          // respawn player snakes so everyone can continue without rejoin
-          for (const [cid, nm] of room.clientName.entries()) {
-            spawnPlayerSnake(room.state, cid, nm);
+          // re-claim
+          const freeSnakes = room.state.snakes.slice();
+          for (const c of room.clients.values()) {
+            const n = room.clientName.get(c.id) || `玩家${room.nextPlayerNumber++}`;
+            const s = freeSnakes.shift();
+            if (s) {
+              claimSnake(room.state, s.id, c.id, n);
+              c.snakeId = s.id;
+            }
           }
-
-          broadcast(room, { type: "info", message: "房间已重开" });
-          sendStateToRoom(room);
+          broadcast(room, { type: "info", message: "已重开一局" });
           return;
         }
 
         case "pause_request": {
-          if (!room) return;
           if (!room.state.isRunning) return;
-          if (room.pauseVoteState) return sendError("当前已有暂停投票进行中");
-
-          const players = getRoomVoters(room);
-          if (players.length === 0) return sendError("暂无真人玩家");
-
-          const requesterName = room.clientName.get(clientId) || "Player";
-          const action: PauseAction = msg.action;
-
-          // only one player => apply directly
-          if (players.length === 1) {
-            room.state.isPaused = action === "pause";
-            broadcast(room, { type: "info", message: action === "pause" ? "游戏已暂停" : "游戏已继续" });
-            sendStateToRoom(room);
-            return;
+          if (room.pauseVoteState) {
+            return send(ws, { type: "error", message: "当前已有暂停投票进行中" });
           }
 
-          const requestId = nanoid();
+          const eligible = getEligiblePlayers(room);
+          if (eligible.length === 0) return;
+
+          const requester = eligible.find((e) => e.clientId === clientId) || {
+            clientId,
+            playerName: name,
+          };
+
+          const requestId = nanoid(8);
           const votes: Record<string, PauseVote | null> = {};
-          for (const p of players) votes[p.clientId] = null;
-          votes[clientId] = "accept";
+          for (const e of eligible) votes[e.clientId] = null;
 
           room.pauseVoteState = {
             proposal: {
               requestId,
-              action,
-              requestedBy: clientId,
-              requestedByName: requesterName,
-              eligible: players,
+              action: msg.action,
+              requestedBy: requester,
+              eligible,
               votes,
-              expiresAt: Date.now() + 15000,
+              createdAt: Date.now(),
+              expiresAt: Date.now() + 20000,
             },
           };
 
-          broadcastPauseProposal(room);
+          broadcast(room, { type: "pause_proposal", proposal: room.pauseVoteState.proposal });
           return;
         }
 
         case "pause_vote": {
-          if (!room || !room.pauseVoteState) return;
-          const p = room.pauseVoteState.proposal;
-          if (msg.requestId !== p.requestId) return;
-          if (!(clientId in p.votes)) return;
-          p.votes[clientId] = msg.vote;
+          const vs = room.pauseVoteState;
+          if (!vs) return;
+          if (vs.proposal.requestId !== msg.requestId) return;
+          if (!(clientId in vs.proposal.votes)) return;
+
+          vs.proposal.votes[clientId] = msg.vote;
           maybeResolvePauseProposal(room);
-          if (room.pauseVoteState) broadcastPauseProposal(room);
           return;
         }
 
@@ -419,34 +423,25 @@ export function setupMultiplayer(server: HttpServer) {
     });
 
     ws.on("close", () => {
-      pending.delete(clientId);
+      // release snake back to AI
+      releaseClientSnakes(room.state, clientId);
 
-      const rid = clientRoom.get(clientId);
-      if (!rid) return;
-
-      const room = rooms.get(rid);
-      clientRoom.delete(clientId);
-      if (!room) return;
-
+      const nm = room.clientName.get(clientId) || "玩家";
       room.clients.delete(clientId);
-      const name = room.clientName.get(clientId) || "玩家";
       room.clientName.delete(clientId);
 
-      // remove player snake(s)
-      removeClientPlayers(room.state, clientId);
+      broadcast(room, { type: "info", message: `${nm} 离开房间（${room.clients.size}/${MAX_PLAYERS}）` });
 
-      broadcast(room, { type: "info", message: `${name} 离开了房间` });
-      sendStateToRoom(room);
-
+      // if everyone left, cleanup room to save CPU
       if (room.clients.size === 0) {
+        clearInterval(room.timer);
         rooms.delete(room.id);
+      } else {
+        // if a pause proposal exists, re-evaluate eligibility
+        if (room.pauseVoteState) {
+          maybeResolvePauseProposal(room);
+        }
       }
     });
-  });
-
-  // If server closes, stop timers
-  wss.on("close", () => {
-    clearInterval(simTimer);
-    clearInterval(netTimer);
   });
 }

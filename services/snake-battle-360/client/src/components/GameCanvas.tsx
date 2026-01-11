@@ -1,20 +1,20 @@
 /**
- * GameCanvas
- * - Renders a large world with camera follow + dynamic zoom (length-based).
- * - Uses requestAnimationFrame for smooth visuals.
- *
- * ✅ v4 Smoothness update:
- * - Interpolate between last 2 network snapshots (adds ~1 snapshot of visual latency but removes stutter).
- * - Light extrapolation when snapshots are late (reduces "turn feels delayed").
- * - Defensive drawing for food.createdAt to avoid white-screen crashes.
+ * GameCanvas (v5)
+ * - Smooth multiplayer: snapshot interpolation + lightweight prediction for local player
+ * - Big perf win: draw snakes as stroked paths (NOT per-segment arcs)
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import type { MutableRefObject } from "react";
 import type { FoodParticle, GameState, Snake, Vec2 } from "@/lib/gameEngine";
+import { BASE_SPEED, MAX_TURN_RATE } from "@/lib/gameEngine";
+
+type Stick = { x: number; y: number };
 
 type Props = {
   gameState: GameState;
   mySnakeId?: string | null;
+  myStickRef?: MutableRefObject<Stick>;
 };
 
 const BG_URL = "/background/1.png";
@@ -26,23 +26,18 @@ let bgFailed = false;
 function ensureBackgroundLoaded() {
   if (bgImg || bgFailed) return;
   const img = new Image();
-  img.decoding = "async";
-  img.src = BG_URL;
   img.onload = () => {
+    bgImg = img;
     bgReady = true;
   };
   img.onerror = () => {
     bgFailed = true;
   };
-  bgImg = img;
+  img.src = BG_URL;
 }
 
-function clamp(v: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function dist(a: Vec2, b: Vec2) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -53,83 +48,241 @@ function lerpVec(a: Vec2, b: Vec2, t: number): Vec2 {
   return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
 }
 
-function wrapAngle(a: number) {
-  while (a >= Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-}
-
-function rotateTowards(cur: number, target: number, maxDelta: number) {
-  const d = wrapAngle(target - cur);
-  if (Math.abs(d) <= maxDelta) return target;
-  return cur + Math.sign(d) * maxDelta;
-}
-
-function hexToRgb(hex: string) {
-  const h = hex.replace("#", "");
-  if (h.length !== 6) return { r: 255, g: 255, b: 255 };
-  const n = parseInt(h, 16);
-  return {
-    r: (n >> 16) & 255,
-    g: (n >> 8) & 255,
-    b: n & 255,
-  };
-}
-
 function rgba(hex: string, a: number) {
-  const { r, g, b } = hexToRgb(hex);
+  // supports #RRGGBB
+  if (!hex.startsWith("#") || hex.length !== 7) return `rgba(255,255,255,${a})`;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function lighten(hex: string, t: number) {
-  const { r, g, b } = hexToRgb(hex);
-  const rr = Math.round(r + (255 - r) * t);
-  const gg = Math.round(g + (255 - g) * t);
-  const bb = Math.round(b + (255 - b) * t);
-  return `rgb(${rr},${gg},${bb})`;
+function getMySnake(state: GameState, mySnakeId: string | null | undefined) {
+  if (mySnakeId) return state.snakes.find((x) => x.id === mySnakeId) || null;
+  // fallback: first player snake
+  const p = state.snakes.find((x) => x.isPlayer && x.isAlive);
+  return p || null;
 }
 
-export function GameCanvas({ gameState, mySnakeId }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+type Snap = { state: GameState; t: number };
 
-  // Snapshot interpolation
-  const currStateRef = useRef<GameState>(gameState);
-  const prevStateRef = useRef<GameState | null>(null);
-  const prevSnakesRef = useRef<Map<string, Snake>>(new Map());
-  const prevFoodRef = useRef<Map<string, FoodParticle>>(new Map());
+function interpSnake(a: Snake, b: Snake, t: number): Snake {
+  const aBody = a.body;
+  const bBody = b.body;
+  const n = Math.min(aBody.length, bBody.length);
+  const body: Vec2[] = [];
+  for (let i = 0; i < n; i++) body.push(lerpVec(aBody[i], bBody[i], t));
+  if (bBody.length > n) {
+    for (let i = n; i < bBody.length; i++) body.push(bBody[i]);
+  }
+  return { ...b, body, angle: lerp(a.angle, b.angle, t) };
+}
 
-  const lastSnapshotAtRef = useRef<number>(performance.now());
-  const snapshotIntervalRef = useRef<number>(50);
-
-  // Smooth camera state
-  const camRef = useRef({
-    x: gameState.worldWidth / 2,
-    y: gameState.worldHeight / 2,
-    scale: 1,
-    shakeT: 0,
-    shakePow: 0,
+function buildRenderState(a: GameState, b: GameState, t: number): GameState {
+  const aMap = new Map(a.snakes.map((s) => [s.id, s]));
+  const snakes = b.snakes.map((sb) => {
+    const sa = aMap.get(sb.id);
+    return sa ? interpSnake(sa, sb, t) : sb;
   });
 
+  // food can be interpolated only by position if ids match (optional). keep b for simplicity.
+  return { ...b, snakes };
+}
+
+// Very small local prediction for local snake (render-only)
+function predictLocal(state: GameState, mySnakeId: string, stick: Stick | null, dtMs: number): GameState {
+  if (!stick) return state;
+  const s = state.snakes.find((x) => x.id === mySnakeId);
+  if (!s || !s.isAlive) return state;
+
+  const dead = 0.06;
+  const mag = Math.hypot(stick.x, stick.y);
+  if (mag < dead) return state;
+
+  const strength = clamp((mag - dead) / (1 - dead), 0, 1);
+  const curved = Math.pow(strength, 0.55);
+
+  const dirX = stick.x / (mag || 1);
+  const dirY = stick.y / (mag || 1);
+  const targetAngle = Math.atan2(dirY, dirX);
+
+  // rotate quickly (same-ish as server)
+  const maxDelta = MAX_TURN_RATE * (dtMs / 1000) * (0.30 + 0.70 * curved);
+  // wrap to [-pi,pi)
+  const wrap = (a: number) => {
+    while (a >= Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  };
+  const rotateTowards = (current: number, target: number, md: number) => {
+    let delta = wrap(target - current);
+    delta = clamp(delta, -md, md);
+    return wrap(current + delta);
+  };
+
+  const nextAngle = rotateTowards(s.angle, targetAngle, maxDelta);
+
+  // advance forward a bit
+  const dx = Math.cos(nextAngle) * BASE_SPEED * (dtMs / 1000);
+  const dy = Math.sin(nextAngle) * BASE_SPEED * (dtMs / 1000);
+
+  const body = s.body.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  const nextSnake = { ...s, body, angle: nextAngle };
+
+  return {
+    ...state,
+    snakes: state.snakes.map((x) => (x.id === mySnakeId ? nextSnake : x)),
+  };
+}
+
+function drawBackground(ctx: CanvasRenderingContext2D, state: GameState, cam: { x: number; y: number; scale: number }, w: number, h: number) {
+  if (bgReady && bgImg) {
+    // parallax background
+    const img = bgImg;
+    const scale = 1.15;
+    const x = -((cam.x * 0.06) % img.width);
+    const y = -((cam.y * 0.06) % img.height);
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    for (let ix = -1; ix <= 2; ix++) {
+      for (let iy = -1; iy <= 2; iy++) {
+        ctx.drawImage(img, ix * img.width, iy * img.height);
+      }
+    }
+    ctx.restore();
+  } else {
+    // fallback grid
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = "rgba(0,255,255,0.15)";
+    const step = 80;
+    for (let x = 0; x < w; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y < h; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawFood(ctx: CanvasRenderingContext2D, food: FoodParticle[], tMs: number) {
+  for (const f of food) {
+    const born = typeof (f as any).createdAt === "number" ? (f as any).createdAt : tMs;
+    const pulse = 0.85 + 0.15 * Math.sin((tMs - born) * 0.006);
+    const r = Math.max(1, (f.radius || 4) * pulse);
+
+    ctx.save();
+    ctx.fillStyle = rgba((f as any).color || "#00ffff", 0.9);
+    ctx.shadowColor = rgba((f as any).color || "#00ffff", 0.5);
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(f.position.x, f.position.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawSnake(ctx: CanvasRenderingContext2D, s: Snake) {
+  const body = s.body;
+  if (body.length < 2) return;
+
+  // thick path
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // outer glow
+  ctx.strokeStyle = rgba(s.color, 0.65);
+  ctx.lineWidth = s.radius * 2.25;
+  ctx.shadowColor = rgba(s.color, 0.35);
+  ctx.shadowBlur = 18;
+
+  ctx.beginPath();
+  ctx.moveTo(body[body.length - 1].x, body[body.length - 1].y);
+  for (let i = body.length - 2; i >= 0; i--) {
+    const p = body[i];
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+
+  // inner core
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = rgba("#ffffff", 0.12);
+  ctx.lineWidth = s.radius * 1.2;
+  ctx.stroke();
+
+  // head
+  const head = body[0];
+  ctx.fillStyle = rgba(s.color, 0.95);
+  ctx.shadowColor = rgba(s.color, 0.6);
+  ctx.shadowBlur = 18;
+  ctx.beginPath();
+  ctx.arc(head.x, head.y, s.radius * 1.15, 0, Math.PI * 2);
+  ctx.fill();
+
+  // eyes
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  const ex = Math.cos(s.angle) * (s.radius * 0.45);
+  const ey = Math.sin(s.angle) * (s.radius * 0.45);
+  const nx = -Math.sin(s.angle) * (s.radius * 0.35);
+  const ny = Math.cos(s.angle) * (s.radius * 0.35);
+  ctx.beginPath();
+  ctx.arc(head.x + ex + nx, head.y + ey + ny, s.radius * 0.18, 0, Math.PI * 2);
+  ctx.arc(head.x + ex - nx, head.y + ey - ny, s.radius * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const aRef = useRef<Snap | null>(null);
+  const bRef = useRef<Snap | null>(null);
+
+  const camRef = useRef({ x: 0, y: 0, scale: 1 });
+
+  const setSnap = (s: GameState) => {
+    const now = Date.now();
+    if (!aRef.current) {
+      aRef.current = { state: s, t: now };
+      bRef.current = { state: s, t: now };
+      return;
+    }
+    aRef.current = bRef.current;
+    bRef.current = { state: s, t: now };
+  };
+
+  // update snapshot whenever prop changes (by reference)
+  useEffect(() => {
+    setSnap(gameState);
+  }, [gameState]);
+
+  // preload bg
   useEffect(() => {
     ensureBackgroundLoaded();
   }, []);
 
-  // Update snapshot refs when prop changes
-  useEffect(() => {
-    const now = performance.now();
-    const prev = currStateRef.current;
-    prevStateRef.current = prev;
-    prevSnakesRef.current = new Map(prev.snakes.map((s) => [s.id, s]));
-    prevFoodRef.current = new Map(prev.food.map((f) => [f.id, f]));
+  const style = useMemo(() => {
+    return {
+      width: "min(100%, 980px)",
+      height: "min(78vh, 720px)",
+      borderRadius: 18,
+      border: "1px solid rgba(255,255,255,0.10)",
+      background: "rgba(0,0,0,0.10)",
+    } as React.CSSProperties;
+  }, []);
 
-    currStateRef.current = gameState;
-
-    const interval = Math.max(16, now - lastSnapshotAtRef.current);
-    snapshotIntervalRef.current = clamp(interval, 30, 120); // keep stable
-    lastSnapshotAtRef.current = now;
-  }, [gameState]);
-
-  // rAF render loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -137,398 +290,99 @@ export function GameCanvas({ gameState, mySnakeId }: Props) {
     if (!ctx) return;
 
     let raf = 0;
-    let last = performance.now();
+    let lastT = performance.now();
 
-    const frame = (t: number) => {
-      const dt = Math.min(0.05, (t - last) / 1000);
-      last = t;
-
-      const prev = prevStateRef.current || currStateRef.current;
-      const curr = currStateRef.current;
-
-      const intervalMs = snapshotIntervalRef.current;
-      const elapsedMs = t - lastSnapshotAtRef.current;
-
-      // We render the previous snapshot at alpha=0 and slide to current over ~one interval.
-      const alphaRaw = elapsedMs / intervalMs;
-      const alpha = clamp(alphaRaw, 0, 1);
-
-      // If snapshots arrive late, extrapolate a tiny bit from current to reduce "freeze"
-      const extraMs = Math.max(0, elapsedMs - intervalMs);
-      const extraSec = clamp(extraMs / 1000, 0, 0.09);
-
-      draw(ctx, canvas, prev, curr, alpha, extraSec, mySnakeId, camRef.current, dt, t, prevSnakesRef.current, prevFoodRef.current);
-
-      raf = requestAnimationFrame(frame);
+    const resize = () => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [mySnakeId]);
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
 
-  const { viewWidth, viewHeight } = gameState;
+    const INTERP_DELAY = 85; // ms
 
-  return (
-    <canvas
-      ref={canvasRef}
-      width={viewWidth}
-      height={viewHeight}
-      className="border-2 border-white/15 rounded-2xl shadow-lg w-full h-auto max-w-[980px]"
-      style={{
-        aspectRatio: `${viewWidth} / ${viewHeight}`,
-        boxShadow: "0 0 18px rgba(0, 255, 136, 0.12)",
-        touchAction: "none",
-      }}
-    />
-  );
-}
+    const loop = (t: number) => {
+      const dt = t - lastT;
+      lastT = t;
 
-function getMySnake(state: GameState, mySnakeId?: string | null): Snake | null {
-  if (mySnakeId) {
-    const s = state.snakes.find((x) => x.id === mySnakeId);
-    if (s) return s;
-  }
-  const p = state.snakes.find((x) => x.isPlayer && x.isAlive);
-  return p || null;
-}
+      const a = aRef.current;
+      const b = bRef.current;
+      let renderState = gameState;
 
-function draw(
-  ctx: CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
-  prev: GameState,
-  curr: GameState,
-  alpha: number,
-  extraSec: number,
-  mySnakeId: string | null | undefined,
-  cam: { x: number; y: number; scale: number; shakeT: number; shakePow: number },
-  dt: number,
-  t: number,
-  prevSnakes: Map<string, Snake>,
-  prevFood: Map<string, FoodParticle>
-) {
-  const w = canvas.width;
-  const h = canvas.height;
+      if (a && b && b.t !== a.t) {
+        const rt = Date.now() - INTERP_DELAY;
+        const alpha = clamp((rt - a.t) / (b.t - a.t), 0, 1);
+        renderState = buildRenderState(a.state, b.state, alpha);
 
-  const meCurr = getMySnake(curr, mySnakeId);
-  const mePrev = meCurr ? prevSnakes.get(meCurr.id) : null;
-
-  const focusBase = meCurr?.body?.[0] || { x: curr.worldWidth / 2, y: curr.worldHeight / 2 };
-  const focusPrev = mePrev?.body?.[0] || focusBase;
-
-  // Interpolated focus
-  let focus = lerpVec(focusPrev, focusBase, alpha);
-
-  // Tiny extrapolation to reduce "waiting for next snapshot" feel
-  if (meCurr && extraSec > 0) {
-    const speed = meCurr.speed || 170;
-    let ang = meCurr.angle || 0;
-    const target = (meCurr.targetAngle ?? ang) as number;
-    const strength = clamp(meCurr.steerStrength ?? 0, 0, 1);
-    const maxTurn = Math.PI * 3.0 * extraSec * (0.30 + 0.70 * strength);
-    ang = rotateTowards(ang, target, maxTurn);
-
-    focus = {
-      x: focus.x + Math.cos(ang) * speed * extraSec,
-      y: focus.y + Math.sin(ang) * speed * extraSec,
-    };
-  }
-
-  // Zoom out as we get longer (keep threats visible)
-  const len = meCurr?.length || 220;
-  const targetScale = clamp(1 / (1 + len / 900), 0.32, 1.0);
-
-  // Exponential smoothing
-  const followK = 1 - Math.pow(0.001, dt);
-  cam.x += (focus.x - cam.x) * followK;
-  cam.y += (focus.y - cam.y) * followK;
-  cam.scale += (targetScale - cam.scale) * followK;
-
-  // Screen shake (based on deaths between prev->curr)
-  if (meCurr && prev) {
-    const prevAlive = new Map(prev.snakes.map((s) => [s.id, s.isAlive]));
-    for (const s of curr.snakes) {
-      if (prevAlive.get(s.id) === true && s.isAlive === false) {
-        const headA = focusBase;
-        const headB = s.body[0] || headA;
-        const d = dist(headA, headB);
-        const near = d < 650;
-        const isMe = s.id === meCurr.id;
-        if (near || isMe) {
-          cam.shakeT = isMe ? 0.35 : 0.2;
-          cam.shakePow = isMe ? 10 : 6;
+        // tiny local prediction using time since last snapshot
+        const lag = clamp(Date.now() - b.t, 0, 80);
+        if (mySnakeId && myStickRef?.current) {
+          renderState = predictLocal(renderState, mySnakeId, myStickRef.current, lag);
         }
       }
-    }
-  }
 
-  cam.shakeT = Math.max(0, cam.shakeT - dt);
-  const shake = cam.shakeT > 0 ? cam.shakePow * (cam.shakeT / 0.35) : 0;
-  const sx = (Math.random() - 0.5) * shake;
-  const sy = (Math.random() - 0.5) * shake;
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      ctx.clearRect(0, 0, w, h);
 
-  // Clear
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+      // Camera follow
+      const me = getMySnake(renderState, mySnakeId);
+      const focus = me?.body[0] || { x: renderState.worldWidth / 2, y: renderState.worldHeight / 2 };
+      const len = me?.length || 220;
+      const targetScale = clamp(1 / (1 + len / 950), 0.34, 1.0);
 
-  // Background image (cover)
-  if (bgReady && bgImg) {
-    drawBackgroundCover(ctx, bgImg, w, h);
-    ctx.fillStyle = "rgba(10, 14, 20, 0.35)";
-    ctx.fillRect(0, 0, w, h);
-  } else {
-    ctx.fillStyle = "#0f1419";
-    ctx.fillRect(0, 0, w, h);
-  }
+      const cam = camRef.current;
+      const followK = 1 - Math.pow(0.001, dt / 16.67);
+      cam.x = lerp(cam.x, focus.x, followK);
+      cam.y = lerp(cam.y, focus.y, followK);
+      cam.scale = lerp(cam.scale, targetScale, followK);
 
-  // Camera transform: world -> screen
-  ctx.save();
-  ctx.translate(w / 2, h / 2);
-  ctx.scale(cam.scale, cam.scale);
-  ctx.translate(-cam.x + sx / cam.scale, -cam.y + sy / cam.scale);
+      // World -> screen
+      ctx.save();
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(cam.scale, cam.scale);
+      ctx.translate(-cam.x, -cam.y);
 
-  // Parallax grid
-  drawSoftGrid(ctx, curr, t);
+      // background in world coordinates (simple)
+      drawBackground(ctx, renderState, cam, w, h);
 
-  // World bounds
-  drawBounds(ctx, curr);
+      // bounds (subtle)
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,255,255,0.18)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(0, 0, renderState.worldWidth, renderState.worldHeight);
+      ctx.restore();
 
-  // Food (interpolated)
-  for (const f of curr.food) {
-    const pf = prevFood.get(f.id);
-    const pos = pf ? lerpVec(pf.position, f.position, alpha) : f.position;
-    drawFood(ctx, { ...f, position: pos } as any, t);
-  }
+      // food
+      drawFood(ctx, renderState.food, Date.now());
 
-  // Snakes (tail -> head), interpolated + light extrapolation when late
-  for (const s of curr.snakes) {
-    if (!s.isAlive) continue;
-    const ps = prevSnakes.get(s.id);
-    drawSnakeInterpolated(ctx, s, ps, alpha, extraSec, t);
-  }
+      // snakes (draw others first)
+      const snakes = renderState.snakes.slice().sort((x, y) => {
+        if (mySnakeId && x.id === mySnakeId) return 1;
+        if (mySnakeId && y.id === mySnakeId) return -1;
+        return 0;
+      });
+      for (const s of snakes) {
+        if (!s.isAlive) continue;
+        drawSnake(ctx, s);
+      }
 
-  // HUD in world coords: player name above head
-  if (meCurr && meCurr.isAlive) {
-    const head = focus;
-    ctx.font = "bold 18px Orbitron, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    const label = meCurr.playerName || (meCurr.id === "player" ? "玩家" : meCurr.id);
-    ctx.fillText(label, head.x, head.y - meCurr.radius - 10);
-  }
+      ctx.restore();
 
-  ctx.restore();
+      raf = requestAnimationFrame(loop);
+    };
 
-  // Pause overlay
-  if (curr.isPaused) {
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(0,255,200,0.95)";
-    ctx.font = "900 44px Orbitron, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("暂停", w / 2, h / 2);
-  }
-}
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [gameState, mySnakeId, myStickRef]);
 
-function drawBackgroundCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, w: number, h: number) {
-  const iw = img.naturalWidth || img.width;
-  const ih = img.naturalHeight || img.height;
-  if (!iw || !ih) return;
-  const s = Math.max(w / iw, h / ih);
-  const dw = iw * s;
-  const dh = ih * s;
-  const dx = (w - dw) / 2;
-  const dy = (h - dh) / 2;
-  ctx.drawImage(img, dx, dy, dw, dh);
-}
-
-function drawSoftGrid(ctx: CanvasRenderingContext2D, state: GameState, t: number) {
-  const step = 120;
-  ctx.save();
-  ctx.globalAlpha = 0.25;
-  ctx.lineWidth = 1;
-
-  for (let x = 0; x <= state.worldWidth; x += step) {
-    const pulse = 0.6 + 0.4 * Math.sin(t * 0.001 + x * 0.002);
-    ctx.strokeStyle = `rgba(0,255,200,${0.04 * pulse})`;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, state.worldHeight);
-    ctx.stroke();
-  }
-
-  for (let y = 0; y <= state.worldHeight; y += step) {
-    const pulse = 0.6 + 0.4 * Math.sin(t * 0.001 + y * 0.002);
-    ctx.strokeStyle = `rgba(255,0,255,${0.03 * pulse})`;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(state.worldWidth, y);
-    ctx.stroke();
-  }
-
-  ctx.restore();
-}
-
-function drawBounds(ctx: CanvasRenderingContext2D, state: GameState) {
-  ctx.save();
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.strokeRect(0, 0, state.worldWidth, state.worldHeight);
-  ctx.restore();
-}
-
-function drawFood(ctx: CanvasRenderingContext2D, f: FoodParticle, t: number) {
-  const createdAt = (f as any).createdAt ?? t; // defensive: avoid NaN -> white-screen
-  const pulse = 0.75 + 0.25 * Math.sin((t - createdAt) * 0.006);
-  const r = f.radius * pulse;
-
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  ctx.shadowColor = rgba(f.color, 0.6);
-  ctx.shadowBlur = 14;
-
-  const grad = ctx.createRadialGradient(f.position.x - r * 0.3, f.position.y - r * 0.3, r * 0.2, f.position.x, f.position.y, r * 2.2);
-  const hot = lighten(f.color, f.kind === "loot" ? 0.55 : 0.35);
-  grad.addColorStop(0, rgba(hot, 0.95));
-  grad.addColorStop(0.45, rgba(f.color, 0.75));
-  grad.addColorStop(1, rgba(f.color, 0));
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(f.position.x, f.position.y, r * 2.1, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = rgba(hot, 0.9);
-  ctx.beginPath();
-  ctx.arc(f.position.x, f.position.y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawSnakeInterpolated(ctx: CanvasRenderingContext2D, s: Snake, ps: Snake | undefined, alpha: number, extraSec: number, t: number) {
-  const body = s.body;
-  const n = body.length;
-
-  // Predict head shift when snapshots are late (small, helps responsiveness)
-  let shiftX = 0;
-  let shiftY = 0;
-  if (extraSec > 0) {
-    const speed = s.speed || 170;
-    let ang = s.angle || 0;
-    const target = (s.targetAngle ?? ang) as number;
-    const strength = clamp(s.steerStrength ?? 0, 0, 1);
-    const maxTurn = Math.PI * 3.0 * extraSec * (0.30 + 0.70 * strength);
-    ang = rotateTowards(ang, target, maxTurn);
-    shiftX = Math.cos(ang) * speed * extraSec;
-    shiftY = Math.sin(ang) * speed * extraSec;
-  }
-
-  // Draw from tail to head so head stays on top
-  for (let i = n - 1; i >= 0; i--) {
-    const p = body[i];
-    const pp = ps?.body?.[Math.min(i, (ps.body?.length || 1) - 1)] || p;
-    const ip = lerpVec(pp, p, alpha);
-
-    const headness = 1 - i / Math.max(1, n - 1); // 1 at head
-    const baseR = s.radius * (0.65 + 0.35 * headness);
-
-    // Apply head-weighted shift (keeps tail steadier)
-    const w = 0.15 + 0.85 * headness;
-    const x0 = ip.x + shiftX * w;
-    const y0 = ip.y + shiftY * w;
-
-    // wavy motion (subtle)
-    const phase = t * 0.003 + i * 0.42;
-    const amp = s.radius * 0.35 * headness;
-    const dir = getTangent(body, i);
-    const nx = -dir.y;
-    const ny = dir.x;
-    const wx = nx * Math.sin(phase) * amp;
-    const wy = ny * Math.sin(phase) * amp;
-    const x = x0 + wx;
-    const y = y0 + wy;
-
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.shadowColor = rgba(s.color, 0.35 + 0.35 * headness);
-    ctx.shadowBlur = 16;
-
-    const hot = lighten(s.color, 0.18 + 0.42 * headness);
-    const grad = ctx.createRadialGradient(x - baseR * 0.35, y - baseR * 0.35, baseR * 0.2, x, y, baseR * 1.55);
-    grad.addColorStop(0, rgba(hot, 0.95));
-    grad.addColorStop(0.5, rgba(s.color, 0.85));
-    grad.addColorStop(1, rgba(s.color, 0.15));
-    ctx.fillStyle = grad;
-
-    ctx.beginPath();
-    ctx.arc(x, y, baseR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // inner core
-    ctx.shadowBlur = 0;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = rgba(hot, 0.6 + 0.25 * headness);
-    ctx.beginPath();
-    ctx.arc(x, y, baseR * 0.55, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  // Eyes on head
-  const head = body[0];
-  const pHead = ps?.body?.[0] || head;
-  const ih = lerpVec(pHead, head, alpha);
-  const headnessShiftX = shiftX * 1.0;
-  const headnessShiftY = shiftY * 1.0;
-  drawEyes(ctx, { x: ih.x + headnessShiftX, y: ih.y + headnessShiftY }, s, t);
-}
-
-function getTangent(body: Vec2[], i: number) {
-  const a = body[Math.max(0, i - 1)];
-  const b = body[Math.min(body.length - 1, i + 1)];
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const d = Math.hypot(dx, dy) || 1;
-  return { x: dx / d, y: dy / d };
-}
-
-function drawEyes(ctx: CanvasRenderingContext2D, head: Vec2, s: Snake, t: number) {
-  // Use snake angle for eye direction if present
-  const ang = s.angle ?? 0;
-  const fx = Math.cos(ang);
-  const fy = Math.sin(ang);
-
-  const ex = -fy;
-  const ey = fx;
-
-  const eyeOffset = s.radius * 0.35;
-  const eyeR = s.radius * 0.28;
-
-  const left = { x: head.x + ex * eyeOffset, y: head.y + ey * eyeOffset };
-  const right = { x: head.x - ex * eyeOffset, y: head.y - ey * eyeOffset };
-
-  ctx.save();
-  ctx.globalCompositeOperation = "source-over";
-
-  // sclera
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
-  ctx.beginPath();
-  ctx.arc(left.x, left.y, eyeR, 0, Math.PI * 2);
-  ctx.arc(right.x, right.y, eyeR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // pupil wiggle
-  const wig = 0.55 + 0.45 * Math.sin(t * 0.004);
-  const px = fx * eyeR * 0.4 * wig;
-  const py = fy * eyeR * 0.4 * wig;
-
-  ctx.fillStyle = "rgba(0,0,0,0.9)";
-  ctx.beginPath();
-  ctx.arc(left.x + px, left.y + py, eyeR * 0.45, 0, Math.PI * 2);
-  ctx.arc(right.x + px, right.y + py, eyeR * 0.45, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.restore();
+  return <canvas ref={canvasRef} style={style} />;
 }

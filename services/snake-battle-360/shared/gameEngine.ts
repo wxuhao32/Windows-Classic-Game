@@ -94,11 +94,11 @@ export const SEGMENT_SPACING = 8; // segment-to-segment target spacing
 export const START_LENGTH = 220; // units
 
 export const BASE_SPEED = 170; // units/sec
-export const MAX_TURN_RATE = Math.PI * 3.0; // rad/sec (≈540°/s) 更跟手
+export const MAX_TURN_RATE = Math.PI * 3.6; // rad/sec (≈648°/s)
 
-export const FOOD_TARGET = 260;
-export const FOOD_SPAWN_PER_TICK = 6;
-export const FOOD_MAX = 650;
+export const FOOD_TARGET = 160;
+export const FOOD_SPAWN_PER_TICK = 4;
+export const FOOD_MAX = 320;
 
 export const FOOD_DOT_VALUE = 10;
 export const FOOD_ORB_VALUE = 22;
@@ -207,6 +207,7 @@ export function initializeGame(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW
     food: [],
     viewWidth,
     viewHeight,
+    viewHeight,
     worldWidth: WORLD_WIDTH,
     worldHeight: WORLD_HEIGHT,
     isRunning: true,
@@ -305,7 +306,7 @@ function seedFood(state: GameState, count: number) {
 function spawnFood(state: GameState, kind: "dot" | "orb" | "loot"): FoodParticle {
   const now = Date.now();
   const isOrb = kind === "orb";
-  const radius = isOrb ? randomRange(7, 10) : randomRange(4, 6);
+  const radius = isOrb ? randomRange(6, 9) : randomRange(3, 5);
   const value = isOrb ? FOOD_ORB_VALUE : FOOD_DOT_VALUE;
   const pos = randomFreePosition(state, radius + 3);
   return {
@@ -368,21 +369,22 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
   const snake = state.snakes.find((s) => s.id === snakeId);
   if (!snake || !snake.isAlive) return;
 
-  // ✅ 更跟手：降低死区 + 重新映射力度（避免“摇杆推不动 / 转向延迟大”）
-  const DEAD = 0.06; // normalized
-  const raw = clamp(len(stick), 0, 1);
+  // 更“跟手”的摇杆映射：
+  // - 更小 deadzone
+  // - deadzone 后重映射到 [0..1]
+  // - 使用轻微曲线提升中段灵敏度
+  const dead = 0.06;
 
-  if (raw < DEAD) {
+  const mag = clamp(len(stick), 0, 1);
+  if (mag < dead) {
     snake.steerStrength = 0;
-    // neutral => keep current heading (no extra turning)
     snake.targetAngle = snake.angle;
     return;
   }
 
-  // remap after deadzone and apply a curve so mid-strength steering feels snappier
-  let strength = clamp((raw - DEAD) / (1 - DEAD), 0, 1);
-  strength = Math.sqrt(strength); // curve: more responsive around mid-range
-  snake.steerStrength = strength;
+  const strength = clamp((mag - dead) / (1 - dead), 0, 1);
+  const curved = Math.pow(strength, 0.55);
+  snake.steerStrength = curved;
 
   const v = norm(stick);
   snake.targetAngle = Math.atan2(v.y, v.x);
@@ -418,48 +420,6 @@ export function releaseClientSnakes(state: GameState, clientId: string) {
     }
   }
 }
-
-/**
- * 多人联机：为某个客户端生成“专属玩家蛇”（不再需要自由接管 AI 蛇）。
- * - 如果客户端已有一条存活蛇，则复用。
- * - 新蛇随机出生在世界中部区域，避免贴墙秒死。
- */
-export function spawnPlayerSnake(state: GameState, clientId: string, playerName: string): string {
-  const existing = state.snakes.find((s) => s.isAlive && s.controlledBy === clientId);
-  if (existing) {
-    existing.isPlayer = true;
-    existing.playerName = playerName;
-    existing.controlledBy = clientId;
-    return existing.id;
-  }
-
-  const id = `p-${clientId.slice(0, 8)}-${Date.now().toString(16)}`;
-  const pos: Vec2 = {
-    x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
-    y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
-  };
-  const angle = randomRange(-Math.PI, Math.PI);
-
-  state.snakes.push(
-    createSnake({
-      id,
-      position: pos,
-      color: pick(SNAKE_COLORS),
-      isPlayer: true,
-      angle,
-      controlledBy: clientId,
-      playerName,
-    })
-  );
-
-  return id;
-}
-
-/** 断线/离开：移除该客户端控制的玩家蛇（避免“幽灵玩家”占坑） */
-export function removeClientPlayers(state: GameState, clientId: string) {
-  state.snakes = state.snakes.filter((s) => s.controlledBy !== clientId);
-}
-
 
 // ---------------------------------------------------------------------------
 // Update loop
@@ -588,7 +548,7 @@ export function updateGame(state: GameState, dtMs: number) {
     const head = s.body[0];
     for (let i = state.food.length - 1; i >= 0; i--) {
       const f = state.food[i];
-      if (dist(head, f.position) < s.radius + f.radius + 2.5) {
+      if (dist(head, f.position) < s.radius + f.radius + 3.5) {
         s.length += f.value;
         s.score += Math.round(f.value);
         state.food.splice(i, 1);
@@ -596,27 +556,72 @@ export function updateGame(state: GameState, dtMs: number) {
     }
   }
 
-  // Optional: keep population (respawn AI-only) so the world doesn't get empty.
+  // Keep population close to desiredSnakeCount.
+// For small rooms (e.g. multiplayer 4 snakes), we must NOT grow the snake array unboundedly.
   const aliveCount = state.snakes.filter((s) => s.isAlive).length;
-  if (aliveCount < Math.max(6, Math.floor(state.desiredSnakeCount * 0.6))) {
-    // respawn 1-2 AI per tick if needed
-    const need = Math.min(2, state.desiredSnakeCount - aliveCount);
-    for (let i = 0; i < need; i++) {
-      const id = makeId("ai");
-      state.snakes.push(
-        createSnake({
-          id,
-          position: {
-            x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
-            y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
-          },
-          color: pick(SNAKE_COLORS),
-          isPlayer: false,
-          angle: randomRange(-Math.PI, Math.PI),
-        })
-      );
+  if (aliveCount < state.desiredSnakeCount) {
+    const need = state.desiredSnakeCount - aliveCount;
+
+    // Prefer reviving dead snakes in-place (keeps a fixed snake pool).
+    const deadSnakes = state.snakes.filter((s) => !s.isAlive);
+    for (let i = 0; i < need && i < deadSnakes.length; i++) {
+      const s = deadSnakes[i];
+      const keepOwner = !!s.controlledBy && s.isPlayer;
+
+      const pos: Vec2 = {
+        x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
+        y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
+      };
+      const angle = randomRange(-Math.PI, Math.PI);
+      const forward = angleToVec(angle);
+      const segCount = Math.ceil(START_LENGTH / SEGMENT_SPACING);
+      const body: Vec2[] = [];
+      for (let j = 0; j < segCount; j++) {
+        body.push({
+          x: pos.x - forward.x * j * SEGMENT_SPACING,
+          y: pos.y - forward.y * j * SEGMENT_SPACING,
+        });
+      }
+
+      s.body = body;
+      s.angle = wrapAngle(angle);
+      s.targetAngle = wrapAngle(angle);
+      s.steerStrength = 0;
+      s.speed = BASE_SPEED;
+      s.radius = SNAKE_RADIUS;
+      s.length = START_LENGTH;
+      s.score = 0;
+      s.isAlive = true;
+
+      if (!keepOwner) {
+        s.isPlayer = false;
+        s.controlledBy = undefined;
+        s.playerName = undefined;
+      }
     }
-    // prevent unbounded growth of snakes array
+
+    // If we still need more and the array is smaller than desired (rare), add new AI.
+    const stillNeed = state.desiredSnakeCount - state.snakes.filter((s) => s.isAlive).length;
+    if (stillNeed > 0 && state.snakes.length < state.desiredSnakeCount) {
+      for (let i = 0; i < stillNeed; i++) {
+        const id = makeId("ai");
+        state.snakes.push(
+          createSnake({
+            id,
+            position: {
+              x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
+              y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
+            },
+            color: pick(SNAKE_COLORS),
+            isPlayer: false,
+            angle: randomRange(-Math.PI, Math.PI),
+          })
+        );
+      }
+    }
+  }
+
+  // prevent unbounded growth of snakes array
     if (state.snakes.length > state.desiredSnakeCount * 2) {
       state.snakes = state.snakes.filter((s) => s.isAlive);
     }
