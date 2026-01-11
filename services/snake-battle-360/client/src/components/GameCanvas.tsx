@@ -59,9 +59,12 @@ function rgba(hex: string, a: number) {
 
 function getMySnake(state: GameState, mySnakeId: string | null | undefined) {
   if (mySnakeId) return state.snakes.find((x) => x.id === mySnakeId) || null;
-  // fallback: first player snake
+  const c = state.snakes.find((x) => !!x.controlledBy && x.isAlive);
+  if (c) return c;
   const p = state.snakes.find((x) => x.isPlayer && x.isAlive);
-  return p || null;
+  if (p) return p;
+  const a = state.snakes.find((x) => x.isAlive);
+  return a || null;
 }
 
 type Snap = { state: GameState; t: number };
@@ -246,30 +249,11 @@ function drawSnake(ctx: CanvasRenderingContext2D, s: Snake) {
 
 export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const dprRef = useRef(1);
-
-  // Keep latest props in refs so the render loop never needs to restart (prevents flicker / jank)
-  const latestStateRef = useRef<GameState>(gameState);
-  const myIdRef = useRef<string | null | undefined>(mySnakeId);
-  const stickRefRef = useRef<MutableRefObject<Stick> | undefined>(myStickRef);
-
-  useEffect(() => {
-    latestStateRef.current = gameState;
-    myIdRef.current = mySnakeId;
-    stickRefRef.current = myStickRef;
-  }, []);
 
   const aRef = useRef<Snap | null>(null);
   const bRef = useRef<Snap | null>(null);
 
   const camRef = useRef({ x: 0, y: 0, scale: 1 });
-
-  // Local player prediction (render-only): keeps online control as responsive as offline.
-  const predRef = useRef<{
-    baseSnapT: number;
-    snake: Snake;
-    lastNow: number;
-  } | null>(null);
 
   const setSnap = (s: GameState) => {
     const now = Date.now();
@@ -313,7 +297,6 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
     const resize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      dprRef.current = dpr;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.floor(rect.width * dpr));
       canvas.height = Math.max(1, Math.floor(rect.height * dpr));
@@ -327,105 +310,40 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
     const INTERP_DELAY = 85; // ms
 
     const loop = (t: number) => {
-      const dtRaw = t - lastT;
+      const dt = t - lastT;
       lastT = t;
-      const dt = clamp(dtRaw, 0, 50);
 
       const a = aRef.current;
       const b = bRef.current;
-      let renderState = latestStateRef.current;
-
-      const myId = myIdRef.current || null;
-      const myStick = stickRefRef.current?.current || null;
+      let renderState = gameState;
 
       if (a && b && b.t !== a.t) {
         const rt = Date.now() - INTERP_DELAY;
         const alpha = clamp((rt - a.t) / (b.t - a.t), 0, 1);
         renderState = buildRenderState(a.state, b.state, alpha);
-      }
 
-      // Local player: render-side prediction from the newest snapshot (b) using per-frame dt.
-      // This makes online control feel much closer to offline (instant response, minimal perceived latency).
-      if (myId && b) {
-        const baseSnake = b.state.snakes.find((x) => x.id === myId) || null;
-        if (baseSnake) {
-          if (!predRef.current || predRef.current.baseSnapT !== b.t) {
-            predRef.current = {
-              baseSnapT: b.t,
-              snake: { ...baseSnake, body: baseSnake.body.map((p) => ({ ...p })) },
-              lastNow: t,
-            };
-          } else {
-            const pr = predRef.current;
-            const dtPred = clamp(t - pr.lastNow, 0, 50);
-            pr.lastNow = t;
-
-            const s = pr.snake;
-            let nextAngle = s.angle;
-
-            // Steering: lower deadzone + more aggressive curve for easier turning
-            const dead = 0.04;
-            const mag = myStick ? Math.hypot(myStick.x, myStick.y) : 0;
-            if (myStick && mag >= dead) {
-              const strength01 = clamp((mag - dead) / (1 - dead), 0, 1);
-              const curved = Math.pow(strength01, 0.42);
-
-              const dirX = myStick.x / (mag || 1);
-              const dirY = myStick.y / (mag || 1);
-              const targetAngle = Math.atan2(dirY, dirX);
-
-              const wrap = (ang: number) => {
-                while (ang >= Math.PI) ang -= Math.PI * 2;
-                while (ang < -Math.PI) ang += Math.PI * 2;
-                return ang;
-              };
-
-              const maxDelta = MAX_TURN_RATE * (dtPred / 1000) * (0.65 + 0.35 * curved);
-              let delta = wrap(targetAngle - nextAngle);
-              delta = clamp(delta, -maxDelta, maxDelta);
-              nextAngle = wrap(nextAngle + delta);
-            }
-
-            // Always advance forward (snake is always moving)
-            const dx = Math.cos(nextAngle) * BASE_SPEED * (dtPred / 1000);
-            const dy = Math.sin(nextAngle) * BASE_SPEED * (dtPred / 1000);
-
-            pr.snake = {
-              ...s,
-              angle: nextAngle,
-              body: s.body.map((p) => ({ x: p.x + dx, y: p.y + dy })),
-            };
-          }
-
-          const predSnake = predRef.current!.snake;
-          renderState = {
-            ...renderState,
-            snakes: renderState.snakes.map((x) =>
-              x.id === myId ? { ...x, ...predSnake, body: predSnake.body } : x
-            ),
-          };
+        // tiny local prediction using time since last snapshot
+        const lag = clamp(Date.now() - b.t, 0, 80);
+        if (mySnakeId && myStickRef?.current) {
+          renderState = predictLocal(renderState, mySnakeId, myStickRef.current, lag);
         }
       }
 
-      const dpr = dprRef.current || 1;
-      const w = canvas.width / dpr;
-      const h = canvas.height / dpr;
-
-      // hard clear in device pixels (prevents trails/ghosting)
+      const w = Math.max(1, Math.floor(canvas.clientWidth));
+      const h = Math.max(1, Math.floor(canvas.clientHeight));
+      const dpr = Math.max(1, Math.floor((window.devicePixelRatio || 1) * 100) / 100);
+      const needW = Math.floor(w * dpr);
+      const needH = Math.floor(h * dpr);
+      if (canvas.width !== needW || canvas.height !== needH) {
+        canvas.width = needW;
+        canvas.height = needH;
+      }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // back to CSS pixel space (ctx is dpr-scaled)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.globalCompositeOperation = "source-over";
-      ctx.imageSmoothingEnabled = true;
-
-      // solid base to avoid flicker/alpha artifacts
-      ctx.fillStyle = "#0f1419";
-      ctx.fillRect(0, 0, w, h);
 
       // Camera follow
-      const me = getMySnake(renderState, myId);
+      const me = getMySnake(renderState, mySnakeId);
       const focus = me?.body[0] || { x: renderState.worldWidth / 2, y: renderState.worldHeight / 2 };
       const len = me?.length || 220;
       const targetScale = clamp(1 / (1 + len / 950), 0.34, 1.0);
@@ -436,14 +354,11 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       cam.y = lerp(cam.y, focus.y, followK);
       cam.scale = lerp(cam.scale, targetScale, followK);
 
-      // pixel-snap camera to reduce shimmer/ghosting on moving objects
-      const snapUnit = 1 / cam.scale;
-      cam.x = Math.round(cam.x / snapUnit) * snapUnit;
-      cam.y = Math.round(cam.y / snapUnit) * snapUnit;
-
       // World -> screen
       ctx.save();
-      ctx.translate(w / 2, h / 2);
+      const originX = Math.round((w / 2 - cam.x * cam.scale) * dpr) / dpr;
+      const originY = Math.round((h / 2 - cam.y * cam.scale) * dpr) / dpr;
+      ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
       ctx.translate(-cam.x, -cam.y);
 
@@ -462,8 +377,8 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
       // snakes (draw others first)
       const snakes = renderState.snakes.slice().sort((x, y) => {
-        if (myId && x.id === myId) return 1;
-        if (myId && y.id === myId) return -1;
+        if (mySnakeId && x.id === mySnakeId) return 1;
+        if (mySnakeId && y.id === mySnakeId) return -1;
         return 0;
       });
       for (const s of snakes) {
@@ -481,7 +396,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, []);
+  }, [gameState, mySnakeId, myStickRef]);
 
   return <canvas ref={canvasRef} style={style} />;
 }

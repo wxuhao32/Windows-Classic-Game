@@ -145,22 +145,16 @@ export function VirtualJoystick({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onLostPointerCapture={onPointerUp}
         className="absolute inset-0"
       />
       <div
-        className="absolute rounded-full"
+        className="absolute left-1/2 top-1/2 rounded-full"
         style={{
-          pointerEvents: "none",
-          left: "50%",
-          top: "50%",
           width: 56,
           height: 56,
-          transform: `translate(${knob.x}px, ${knob.y}px) translate(-50%, -50%)`,
-          border: active ? "1px solid rgba(0,255,255,0.55)" : "1px solid rgba(255,255,255,0.22)",
-          background: active
-            ? "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.30), rgba(0,255,255,0.38) 55%, rgba(0,0,0,0.12) 100%)"
-            : "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.22), rgba(255,255,255,0.10) 65%, rgba(0,0,0,0.12) 100%)",
+          pointerEvents: "none",
+          transform: `translate(-50%, -50%) translate(${knob.x}px, ${knob.y}px)`,
+          background: active ? "rgba(0,255,255,0.45)" : "rgba(255,255,255,0.18)",
           boxShadow: active ? "0 0 18px rgba(0,255,255,0.28)" : "0 0 10px rgba(255,255,255,0.10)",
         }}
       />

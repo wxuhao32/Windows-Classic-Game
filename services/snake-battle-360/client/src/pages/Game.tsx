@@ -45,6 +45,10 @@ function getWsUrl() {
 export default function Game() {
   const [, setLocation] = useLocation();
 
+  const gameRootRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+
   const mode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('mode') === 'online' ? 'online' : 'offline';
@@ -56,63 +60,42 @@ export default function Game() {
       : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
   );
 
-  const [mySnakeId, setMySnakeId] = useState<string | null>(mode === 'offline' ? 'player' : null);
-  const hudStats = useMemo(() => {
-    const meId = mode === 'offline' ? 'player' : mySnakeId;
-    const alive = gameState.snakes.filter((s) => s.isAlive).length;
-    const total = gameState.snakes.length;
-
-    let rank: number | null = null;
-    let myLen: number | null = null;
-
-    if (meId) {
-      const sorted = gameState.snakes.slice().sort((a, b) => (b.length ?? 0) - (a.length ?? 0));
-      const idx = sorted.findIndex((s) => s.id === meId);
-      rank = idx >= 0 ? idx + 1 : null;
-      const me = gameState.snakes.find((s) => s.id === meId);
-      myLen = me?.length ?? null;
-    }
-
-    return { alive, total, rank, myLen };
-  }, [gameState, mode, mySnakeId]);
-
   // 联机状态
   const wsRef = useRef<WebSocket | null>(null);
   const myStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const playfieldRef = useRef<HTMLDivElement | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener('fullscreenchange', onFsChange);
-    onFsChange();
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
-  }, []);
-
-  const toggleFullscreen = useCallback(async () => {
-    const el = playfieldRef.current;
-    try {
-      if (!document.fullscreenElement) {
-        await el?.requestFullscreen?.();
-      } else {
-        await document.exitFullscreen?.();
-      }
-    } catch {
-      // some browsers may block fullscreen
-      toast.error('无法进入全屏（浏览器限制）');
-    }
-  }, []);
   const lastInputSentAtRef = useRef<number>(0);
-  const lastSentStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const pendingInputRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const inputTimerRef = useRef<number | null>(null);
+  const inputRafRef = useRef<number | null>(null);
 
   const clientIdRef = useRef<string | null>(null);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [clientId, setClientId] = useState<string | null>(null);
+  const [mySnakeId, setMySnakeId] = useState<string | null>(mode === 'offline' ? 'player' : null);
 
   // 暂停投票（联机）
   const [pauseProposal, setPauseProposal] = useState<PauseProposal | null>(null);
+
+const hud = useMemo(() => {
+  const totalCount = gameState.snakes.length;
+  const alive = gameState.snakes.filter((s) => s.isAlive);
+  const aliveCount = alive.length;
+
+  let my = mySnakeId ? gameState.snakes.find((s) => s.id === mySnakeId) : undefined;
+  if (!my && clientIdRef.current) {
+    my = gameState.snakes.find((s) => s.controlledBy === clientIdRef.current) || undefined;
+  }
+  const myLength = Math.round(my?.length || 0);
+
+  const aliveSorted = [...alive].sort((a, b) => (b.length || 0) - (a.length || 0));
+  const totalAlive = aliveSorted.length || 1;
+  const idx = my ? aliveSorted.findIndex((s) => s.id === my!.id) : -1;
+  const rank = idx >= 0 ? idx + 1 : totalAlive;
+
+  return { totalCount, aliveCount, rank, totalAlive, myLength };
+}, [gameState, mySnakeId]);
+
+const { totalCount, aliveCount, rank, totalAlive, myLength } = hud;
+
 
   // BGM（用户可放置 client/public/audio/bgm2.mp3）
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -120,6 +103,35 @@ export default function Game() {
 
   // SFX：不依赖外部素材，使用 WebAudio 生成（吃/死亡/暴涨提示）
   const sfxCtxRef = useRef<AudioContext | null>(null);
+
+// Fullscreen API: hides browser UI when supported (Android/desktop). iOS may be limited.
+useEffect(() => {
+  const onFs = () => {
+    const fs = !!document.fullscreenElement;
+    setIsFullscreen(fs);
+    document.body.style.overflow = fs ? "hidden" : "";
+  };
+  document.addEventListener("fullscreenchange", onFs);
+  return () => {
+    document.removeEventListener("fullscreenchange", onFs);
+    document.body.style.overflow = "";
+  };
+}, []);
+
+const toggleFullscreen = useCallback(async () => {
+  try {
+    if (!document.fullscreenElement) {
+      const el = gameRootRef.current ?? document.documentElement;
+      // @ts-ignore
+      await el.requestFullscreen?.({ navigationUI: "hide" });
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch {
+    // ignore
+  }
+}, []);
+
   const playSfx = useCallback(
     (kind: "eat" | "big" | "death") => {
       const ctx = sfxCtxRef.current;
@@ -370,16 +382,6 @@ if (msg.type === 'pause_proposal') {
     ws.send(JSON.stringify(msg));
   }, []);
 
-  // cleanup pending input timer
-  useEffect(() => {
-    return () => {
-      if (inputTimerRef.current != null) {
-        window.clearTimeout(inputTimerRef.current);
-        inputTimerRef.current = null;
-      }
-    };
-  }, []);
-
   // 键盘控制（单机=本地修改；联机=发 input）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -496,43 +498,19 @@ if (msg.type === 'pause_proposal') {
         return;
       }
 
-      // Online:
-      // 1) Always update myStickRef so GameCanvas can do client-side prediction instantly.
-      // 2) Send inputs more frequently (up to ~50Hz) but with change detection to avoid spamming.
+      // Online: throttle input sending (~25Hz) to reduce jank / GC
       pendingInputRef.current = stick;
 
-      const now = performance.now();
-      const minInterval = 20; // ms (≈50Hz) -> much closer to offline feel
-      const elapsed = now - lastInputSentAtRef.current;
-
-      const last = lastSentStickRef.current;
-      const delta = Math.hypot(stick.x - last.x, stick.y - last.y);
-
-      const isNeutral = stick.x === 0 && stick.y === 0;
-      const forceSend = isNeutral || delta > 0.06 || elapsed > 120; // keep-alive for stability
-
-      const send = (s: { x: number; y: number }) => {
-        lastInputSentAtRef.current = performance.now();
-        lastSentStickRef.current = s;
-        sendWs({ type: 'input', stick: s });
+      const flush = () => {
+        inputRafRef.current = null;
+        const now = performance.now();
+        if (now - lastInputSentAtRef.current < 40) return; // 25Hz
+        lastInputSentAtRef.current = now;
+        sendWs({ type: 'input', stick: pendingInputRef.current });
       };
 
-      // If enough time has passed (or force), send immediately
-      if (forceSend || elapsed >= minInterval) {
-        if (inputTimerRef.current != null) {
-          window.clearTimeout(inputTimerRef.current);
-          inputTimerRef.current = null;
-        }
-        send(stick);
-        return;
-      }
-
-      // Otherwise schedule a flush at the next allowed time
-      if (inputTimerRef.current == null) {
-        inputTimerRef.current = window.setTimeout(() => {
-          inputTimerRef.current = null;
-          send(pendingInputRef.current);
-        }, Math.max(0, minInterval - elapsed));
+      if (inputRafRef.current == null) {
+        inputRafRef.current = requestAnimationFrame(flush);
       }
     },
     [mode, sendWs]
@@ -557,8 +535,8 @@ if (msg.type === 'pause_proposal') {
   );
 
   return (
-    <div
-      className="relative overflow-hidden min-h-[100dvh] text-[#e0e0e0] p-3 md:p-6 pb-36 md:pb-6"
+    <div ref={gameRootRef}
+      className={`relative overflow-hidden min-h-[100dvh] text-[#e0e0e0] p-3 md:p-6 ${isFullscreen ? "pb-0" : "pb-36"} md:pb-6`}
       style={{
         backgroundImage: `url(/background/1.png)`,
         backgroundSize: 'cover',
@@ -700,39 +678,28 @@ if (msg.type === 'pause_proposal') {
             </div>
         )}
 
-        {/* 游戏画布 */}
-        <div className="flex justify-center mb-6">
-          <div
-            ref={playfieldRef}
-            className="relative w-full max-w-[900px] aspect-[4/3] rounded-lg overflow-hidden border border-white/10 bg-[#0f1419]"
-          >
-            <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
+{/* 游戏画布（HUD/摇杆均叠加在场地上，避免全屏布局混乱） */}
+<div className="flex justify-center mb-6">
+  <div className="relative w-full max-w-[980px]">
+    <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
+    {/* HUD：左上角小字高透明度 */}
+    <div
+      className="absolute left-3 top-3 text-[11px] leading-4 text-white/70 bg-black/25 rounded px-2 py-1"
+      style={{ pointerEvents: "none" }}
+    >
+      <div>存活：{aliveCount}/{totalCount}</div>
+      <div>排名：{rank}/{totalAlive}</div>
+      <div>长度：{myLength}</div>
+    </div>
+  </div>
+</div>
 
-            {/* 左上角：存活/排名（高透明度小字） */}
-            <div className="absolute left-2 top-2 text-[11px] leading-tight text-white/60 select-none pointer-events-none">
-              <div>存活：{hudStats.alive}/{hudStats.total}</div>
-              {hudStats.rank ? <div>排名：{hudStats.rank}/{hudStats.total}</div> : null}
-              {hudStats.myLen != null ? <div>长度：{Math.floor(hudStats.myLen)}</div> : null}
-            </div>
-
-            {/* 顶部：全屏按钮 */}
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                toggleFullscreen();
-              }}
-              className="absolute right-2 top-2 px-2 py-1 rounded bg-black/40 text-white/70 text-[11px] hover:bg-black/55 active:bg-black/65"
-              style={{ touchAction: 'manipulation' }}
-            >
-              {isFullscreen ? '退出全屏' : '全屏'}
-            </button>
+        {/* 游戏信息（全屏时隐藏，避免挤压场地） */}
+        {!isFullscreen && (
+          <div className="mb-6">
+            <GameInfo gameState={gameState} mySnakeId={mySnakeId} />
           </div>
-        </div>
-
-        {/* 游戏信息 */}
-        <div className="mb-6">
-          <GameInfo gameState={gameState} mySnakeId={mySnakeId} />
-        </div>
+        )}
 
         {/* 游戏控制 */}
         <div className="mb-6">
@@ -741,6 +708,8 @@ if (msg.type === 'pause_proposal') {
             onPauseToggle={handlePauseToggle}
             onRestart={handleRestart}
             onHome={handleHome}
+            onFullscreenToggle={toggleFullscreen}
+            isFullscreen={isFullscreen}
             hidePause={false}
           />
         </div>
@@ -770,7 +739,9 @@ if (msg.type === 'pause_proposal') {
         </div>
       </div>
 
-      {/* 手机：单摇杆（左下角） */}
+        )}
+
+      {/* 手机：单摇杆（左手） */}
       <VirtualJoystick side="left" onStick={handleStick} />
       </div>
     </div>
