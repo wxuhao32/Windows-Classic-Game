@@ -60,8 +60,9 @@ export default function Game() {
   const wsRef = useRef<WebSocket | null>(null);
   const myStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const lastInputSentAtRef = useRef<number>(0);
+  const lastSentStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const pendingInputRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const inputRafRef = useRef<number | null>(null);
+  const inputTimerRef = useRef<number | null>(null);
 
   const clientIdRef = useRef<string | null>(null);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
@@ -327,6 +328,16 @@ if (msg.type === 'pause_proposal') {
     ws.send(JSON.stringify(msg));
   }, []);
 
+  // cleanup pending input timer
+  useEffect(() => {
+    return () => {
+      if (inputTimerRef.current != null) {
+        window.clearTimeout(inputTimerRef.current);
+        inputTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // 键盘控制（单机=本地修改；联机=发 input）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -443,19 +454,43 @@ if (msg.type === 'pause_proposal') {
         return;
       }
 
-      // Online: throttle input sending (~25Hz) to reduce jank / GC
+      // Online:
+      // 1) Always update myStickRef so GameCanvas can do client-side prediction instantly.
+      // 2) Send inputs more frequently (up to ~50Hz) but with change detection to avoid spamming.
       pendingInputRef.current = stick;
 
-      const flush = () => {
-        inputRafRef.current = null;
-        const now = performance.now();
-        if (now - lastInputSentAtRef.current < 40) return; // 25Hz
-        lastInputSentAtRef.current = now;
-        sendWs({ type: 'input', stick: pendingInputRef.current });
+      const now = performance.now();
+      const minInterval = 20; // ms (≈50Hz) -> much closer to offline feel
+      const elapsed = now - lastInputSentAtRef.current;
+
+      const last = lastSentStickRef.current;
+      const delta = Math.hypot(stick.x - last.x, stick.y - last.y);
+
+      const isNeutral = stick.x === 0 && stick.y === 0;
+      const forceSend = isNeutral || delta > 0.06 || elapsed > 120; // keep-alive for stability
+
+      const send = (s: { x: number; y: number }) => {
+        lastInputSentAtRef.current = performance.now();
+        lastSentStickRef.current = s;
+        sendWs({ type: 'input', stick: s });
       };
 
-      if (inputRafRef.current == null) {
-        inputRafRef.current = requestAnimationFrame(flush);
+      // If enough time has passed (or force), send immediately
+      if (forceSend || elapsed >= minInterval) {
+        if (inputTimerRef.current != null) {
+          window.clearTimeout(inputTimerRef.current);
+          inputTimerRef.current = null;
+        }
+        send(stick);
+        return;
+      }
+
+      // Otherwise schedule a flush at the next allowed time
+      if (inputTimerRef.current == null) {
+        inputTimerRef.current = window.setTimeout(() => {
+          inputTimerRef.current = null;
+          send(pendingInputRef.current);
+        }, Math.max(0, minInterval - elapsed));
       }
     },
     [mode, sendWs]
@@ -669,9 +704,10 @@ if (msg.type === 'pause_proposal') {
         </div>
       </div>
 
-      {/* 手机：单摇杆（左下角） */}
+      {/* 手机：双摇杆（左右都可用，满足左手/右手习惯） */}
       <VirtualJoystick side="left" onStick={handleStick} />
-            </div>
+      <VirtualJoystick side="right" onStick={handleStick} />
+      </div>
     </div>
   );
 }

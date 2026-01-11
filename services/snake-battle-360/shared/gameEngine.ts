@@ -94,7 +94,7 @@ export const SEGMENT_SPACING = 8; // segment-to-segment target spacing
 export const START_LENGTH = 220; // units
 
 export const BASE_SPEED = 170; // units/sec
-export const MAX_TURN_RATE = Math.PI * 3.6; // rad/sec (≈648°/s) — 更接近手游手感
+export const MAX_TURN_RATE = Math.PI * 4.0; // rad/sec (≈720°/s) — 更接近手游手感
 
 export const FOOD_TARGET = 160;
 export const FOOD_SPAWN_PER_TICK = 4;
@@ -369,7 +369,7 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
   if (!snake || !snake.isAlive) return;
 
   // 更跟手的摇杆映射：更小死区 + 死区后重映射 + sqrt 曲线提升中段灵敏度
-  const deadzone = 0.06;
+  const deadzone = 0.04;
   const m = clamp(len(stick), 0, 1);
   if (m < deadzone) {
     snake.steerStrength = 0;
@@ -378,7 +378,7 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
   }
 
   const strength01 = clamp((m - deadzone) / (1 - deadzone), 0, 1);
-  const strength = Math.sqrt(strength01); // 中段更灵敏
+  const strength = Math.pow(strength01, 0.42); // 更早进入“可转向”区间（更丝滑）
   snake.steerStrength = strength;
 
   const v = norm(stick);
@@ -483,7 +483,7 @@ export function updateGame(state: GameState, dtMs: number) {
   for (const s of state.snakes) {
     if (!s.isAlive) continue;
 
-    const maxDelta = MAX_TURN_RATE * dt * (0.55 + 0.45 * clamp(s.steerStrength || 0, 0, 1));
+    const maxDelta = MAX_TURN_RATE * dt * (0.65 + 0.35 * clamp(s.steerStrength || 0, 0, 1));
     if (s.targetAngle !== undefined) {
       s.angle = rotateTowards(s.angle, s.targetAngle, maxDelta);
     }
@@ -543,7 +543,7 @@ export function updateGame(state: GameState, dtMs: number) {
     const head = s.body[0];
     for (let i = state.food.length - 1; i >= 0; i--) {
       const f = state.food[i];
-      if (dist(head, f.position) < s.radius + f.radius) {
+      if (dist(head, f.position) < s.radius + f.radius + 4) {
         s.length += f.value;
         s.score += Math.round(f.value);
         state.food.splice(i, 1);
