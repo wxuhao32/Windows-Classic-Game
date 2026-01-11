@@ -207,7 +207,6 @@ export function initializeGame(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW
     food: [],
     viewWidth,
     viewHeight,
-    viewHeight,
     worldWidth: WORLD_WIDTH,
     worldHeight: WORLD_HEIGHT,
     isRunning: true,
