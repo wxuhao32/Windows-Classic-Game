@@ -55,10 +55,51 @@ export default function Game() {
       ? initializeArena(GAME_WIDTH, GAME_HEIGHT, 4)
       : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
   );
+  const hudStats = useMemo(() => {
+    const meId = mode === 'offline' ? 'player' : mySnakeId;
+    const alive = gameState.snakes.filter((s) => s.isAlive).length;
+    const total = gameState.snakes.length;
+
+    let rank: number | null = null;
+    let myLen: number | null = null;
+
+    if (meId) {
+      const sorted = gameState.snakes.slice().sort((a, b) => (b.length ?? 0) - (a.length ?? 0));
+      const idx = sorted.findIndex((s) => s.id === meId);
+      rank = idx >= 0 ? idx + 1 : null;
+      const me = gameState.snakes.find((s) => s.id === meId);
+      myLen = me?.length ?? null;
+    }
+
+    return { alive, total, rank, myLen };
+  }, [gameState, mode, mySnakeId]);
 
   // 联机状态
   const wsRef = useRef<WebSocket | null>(null);
   const myStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const playfieldRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFsChange);
+    onFsChange();
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const el = playfieldRef.current;
+    try {
+      if (!document.fullscreenElement) {
+        await el?.requestFullscreen?.();
+      } else {
+        await document.exitFullscreen?.();
+      }
+    } catch {
+      // some browsers may block fullscreen
+      toast.error('无法进入全屏（浏览器限制）');
+    }
+  }, []);
   const lastInputSentAtRef = useRef<number>(0);
   const lastSentStickRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const pendingInputRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -660,7 +701,31 @@ if (msg.type === 'pause_proposal') {
 
         {/* 游戏画布 */}
         <div className="flex justify-center mb-6">
-          <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
+          <div
+            ref={playfieldRef}
+            className="relative w-full max-w-[900px] aspect-[4/3] rounded-lg overflow-hidden border border-white/10 bg-[#0f1419]"
+          >
+            <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
+
+            {/* 左上角：存活/排名（高透明度小字） */}
+            <div className="absolute left-2 top-2 text-[11px] leading-tight text-white/60 select-none pointer-events-none">
+              <div>存活：{hudStats.alive}/{hudStats.total}</div>
+              {hudStats.rank ? <div>排名：{hudStats.rank}/{hudStats.total}</div> : null}
+              {hudStats.myLen != null ? <div>长度：{Math.floor(hudStats.myLen)}</div> : null}
+            </div>
+
+            {/* 顶部：全屏按钮 */}
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                toggleFullscreen();
+              }}
+              className="absolute right-2 top-2 px-2 py-1 rounded bg-black/40 text-white/70 text-[11px] hover:bg-black/55 active:bg-black/65"
+              style={{ touchAction: 'manipulation' }}
+            >
+              {isFullscreen ? '退出全屏' : '全屏'}
+            </button>
+          </div>
         </div>
 
         {/* 游戏信息 */}
@@ -704,9 +769,8 @@ if (msg.type === 'pause_proposal') {
         </div>
       </div>
 
-      {/* 手机：双摇杆（左右都可用，满足左手/右手习惯） */}
+      {/* 手机：单摇杆（左下角） */}
       <VirtualJoystick side="left" onStick={handleStick} />
-      <VirtualJoystick side="right" onStick={handleStick} />
       </div>
     </div>
   );

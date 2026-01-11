@@ -246,6 +246,7 @@ function drawSnake(ctx: CanvasRenderingContext2D, s: Snake) {
 
 export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dprRef = useRef(1);
 
   // Keep latest props in refs so the render loop never needs to restart (prevents flicker / jank)
   const latestStateRef = useRef<GameState>(gameState);
@@ -312,6 +313,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
     const resize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
+      dprRef.current = dpr;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.floor(rect.width * dpr));
       canvas.height = Math.max(1, Math.floor(rect.height * dpr));
@@ -325,8 +327,9 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
     const INTERP_DELAY = 85; // ms
 
     const loop = (t: number) => {
-      const dt = t - lastT;
+      const dtRaw = t - lastT;
       lastT = t;
+      const dt = clamp(dtRaw, 0, 50);
 
       const a = aRef.current;
       const b = bRef.current;
@@ -404,9 +407,22 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
         }
       }
 
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      ctx.clearRect(0, 0, w, h);
+      const dpr = dprRef.current || 1;
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+
+      // hard clear in device pixels (prevents trails/ghosting)
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // back to CSS pixel space (ctx is dpr-scaled)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.imageSmoothingEnabled = true;
+
+      // solid base to avoid flicker/alpha artifacts
+      ctx.fillStyle = "#0f1419";
+      ctx.fillRect(0, 0, w, h);
 
       // Camera follow
       const me = getMySnake(renderState, myId);
@@ -419,6 +435,11 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       cam.x = lerp(cam.x, focus.x, followK);
       cam.y = lerp(cam.y, focus.y, followK);
       cam.scale = lerp(cam.scale, targetScale, followK);
+
+      // pixel-snap camera to reduce shimmer/ghosting on moving objects
+      const snapUnit = 1 / cam.scale;
+      cam.x = Math.round(cam.x / snapUnit) * snapUnit;
+      cam.y = Math.round(cam.y / snapUnit) * snapUnit;
 
       // World -> screen
       ctx.save();
