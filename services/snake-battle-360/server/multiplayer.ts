@@ -35,7 +35,7 @@ const MAX_PLAYERS = 4;
 const SNAKE_COUNT = 4;
 
 const TICK_MS = 33; // 约 30Hz
-const SNAPSHOT_MS = 50; // 20Hz
+const SNAPSHOT_MS = 33; // 30Hz 快照（更接近单机丝滑）
 
 const FOOD_VIEW_RADIUS = 1200;
 const FOOD_MAX_PER_CLIENT = 240;

@@ -324,9 +324,12 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       const dt = t - lastT;
       lastT = t;
 
+      const myId = mySnakeIdRef.current ?? null;
+      const stick = stickPropRef.current?.current ?? null;
+
       const a = aRef.current;
       const b = bRef.current;
-      let renderState = (bRef.current?.state ?? aRef.current?.state ?? latestStateRef.current);
+      let renderState = (b?.state ?? a?.state ?? latestStateRef.current);
 
       if (a && b && b.t !== a.t) {
         const rt = Date.now() - INTERP_DELAY;
@@ -335,14 +338,11 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
         // tiny local prediction using time since last snapshot
         const lag = clamp(Date.now() - b.t, 0, 80);
-        const myId = mySnakeIdRef.current ?? null;
-      const stick = stickPropRef.current?.current ?? null;
-      if (myId && stick) {
+        if (myId && stick) {
           renderState = predictLocal(renderState, myId, stick, lag);
         }
       }
-
-      const w = canvas.clientWidth;
+const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       ctx.clearRect(0, 0, w, h);
 
