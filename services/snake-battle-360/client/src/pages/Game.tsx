@@ -55,6 +55,8 @@ export default function Game() {
       ? initializeArena(GAME_WIDTH, GAME_HEIGHT, 4)
       : initializeGame(GAME_WIDTH, GAME_HEIGHT, 10)
   );
+
+  const [mySnakeId, setMySnakeId] = useState<string | null>(mode === 'offline' ? 'player' : null);
   const hudStats = useMemo(() => {
     const meId = mode === 'offline' ? 'player' : mySnakeId;
     const alive = gameState.snakes.filter((s) => s.isAlive).length;
@@ -108,7 +110,6 @@ export default function Game() {
   const clientIdRef = useRef<string | null>(null);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [clientId, setClientId] = useState<string | null>(null);
-  const [mySnakeId, setMySnakeId] = useState<string | null>(mode === 'offline' ? 'player' : null);
 
   // 暂停投票（联机）
   const [pauseProposal, setPauseProposal] = useState<PauseProposal | null>(null);
