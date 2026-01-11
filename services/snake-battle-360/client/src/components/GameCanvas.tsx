@@ -290,24 +290,19 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
     ensureBackgroundLoaded();
   }, []);
 
+  // This canvas is always hosted inside a sized container (the playfield).
+  // Let the container control the layout to avoid "canvas height != container height" issues.
   const style = useMemo(() => {
-  if (fullscreen) {
-    return {
+    const base: React.CSSProperties = {
       width: "100%",
       height: "100%",
-      borderRadius: 0,
+      display: "block",
       border: "none",
+      borderRadius: fullscreen ? 0 : 18,
       background: "rgba(0,0,0,0.10)",
-    } as React.CSSProperties;
-  }
-  return {
-    width: "min(100%, 980px)",
-    height: "min(78vh, 720px)",
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.10)",
-  } as React.CSSProperties;
-}, [fullscreen]);
+    };
+    return base;
+  }, [fullscreen]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -389,10 +384,12 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef, fullscreen }: Pro
         cam.y = lerp(cam.y, focus.y, followK);
         cam.scale = lerp(cam.scale, targetScale, followK);
       }
-// World -> screen
+      // World -> screen (camera)
+      // IMPORTANT: do NOT subtract cam twice.
+      // Correct transform: screen = center + scale * (world - cam)
       ctx.save();
-      const originX = Math.round((w / 2 - cam.x * cam.scale) * dpr) / dpr;
-      const originY = Math.round((h / 2 - cam.y * cam.scale) * dpr) / dpr;
+      const originX = Math.round((w / 2) * dpr) / dpr;
+      const originY = Math.round((h / 2) * dpr) / dpr;
       ctx.translate(originX, originY);
       ctx.scale(cam.scale, cam.scale);
       ctx.translate(-cam.x, -cam.y);

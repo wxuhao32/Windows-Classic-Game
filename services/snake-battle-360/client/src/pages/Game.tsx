@@ -704,9 +704,9 @@ if (msg.type === 'pause_proposal') {
         <div className="flex justify-center mb-6">
           <div
             ref={playfieldRef}
-            className="relative w-full max-w-[900px] aspect-[4/3] rounded-lg overflow-hidden border border-white/10 bg-[#0f1419]"
+            className="playfield relative w-full max-w-[900px] aspect-[4/3] rounded-lg overflow-hidden border border-white/10 bg-[#0f1419]"
           >
-            <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} />
+            <GameCanvas gameState={gameState} mySnakeId={mySnakeId} myStickRef={myStickRef} fullscreen={isFullscreen} />
 
             {/* 左上角：存活/排名（高透明度小字） */}
             <div className="absolute left-2 top-2 text-[11px] leading-tight text-white/60 select-none pointer-events-none">
@@ -726,6 +726,10 @@ if (msg.type === 'pause_proposal') {
             >
               {isFullscreen ? '退出全屏' : '全屏'}
             </button>
+
+            {/* 手机：单摇杆（左下角）
+               NOTE: keep it INSIDE the playfield so it remains visible in fullscreen. */}
+            <VirtualJoystick side="left" onStick={handleStick} />
           </div>
         </div>
 
@@ -769,9 +773,6 @@ if (msg.type === 'pause_proposal') {
           </div>
         </div>
       </div>
-
-      {/* 手机：单摇杆（左下角） */}
-      <VirtualJoystick side="left" onStick={handleStick} />
       </div>
     </div>
   );

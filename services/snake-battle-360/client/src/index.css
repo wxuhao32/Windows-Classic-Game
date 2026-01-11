@@ -182,3 +182,26 @@
     }
   }
 }
+
+/* --------------------------------------------------------------------------
+ * Fullscreen playfield tweaks
+ * - Ensure the requested element actually fills the screen
+ * - Keep overlays (virtual joystick, HUD) visible
+ * -------------------------------------------------------------------------- */
+
+.playfield:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+}
+
+/* Safari / older iOS */
+.playfield:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+}

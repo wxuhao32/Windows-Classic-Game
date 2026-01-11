@@ -33,7 +33,10 @@ export function VirtualJoystick({
 
   const containerStyle = useMemo(() => {
     const common: React.CSSProperties = {
-      position: "fixed",
+      // IMPORTANT: keep the joystick inside the playfield subtree.
+      // When the playfield enters fullscreen, only its descendants are visible.
+      // Using absolute makes it work both in normal mode and fullscreen.
+      position: "absolute",
       bottom: "max(18px, env(safe-area-inset-bottom))",
       width: 150,
       height: 150,
