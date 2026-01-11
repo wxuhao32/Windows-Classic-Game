@@ -43,67 +43,6 @@ function getWsUrl() {
 }
 
 export default function Game() {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [forceLandscape, setForceLandscape] = useState(false);
-
-  const updateForceLandscape = useCallback(() => {
-    // If device is portrait while fullscreen, force rotate to landscape via CSS (iOS fallback)
-    const portrait = window.innerHeight > window.innerWidth;
-    setForceLandscape(Boolean(document.fullscreenElement) && portrait);
-  }, []);
-
-  useEffect(() => {
-    const onFs = () => {
-      const fs = Boolean(document.fullscreenElement);
-      setIsFullscreen(fs);
-      // compute immediately after fullscreen change
-      queueMicrotask(() => updateForceLandscape());
-    };
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
-  }, [updateForceLandscape]);
-
-  useEffect(() => {
-    const onResize = () => updateForceLandscape();
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize as any);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize as any);
-    };
-  }, [updateForceLandscape]);
-
-  const toggleFullscreen = useCallback(async () => {
-    try {
-      if (!document.fullscreenElement) {
-        const el = rootRef.current;
-        if (!el) return;
-        // @ts-expect-error navigationUI is not in TS lib for older DOM
-        await el.requestFullscreen?.({ navigationUI: "hide" });
-        // Best-effort orientation lock (works on most Android browsers)
-        try {
-          // @ts-expect-error vendor/experimental
-          await (screen.orientation as any)?.lock?.("landscape");
-        } catch {
-          // iOS/Safari often doesn't support orientation lock; we'll CSS-rotate via forceLandscape
-        }
-        updateForceLandscape();
-      } else {
-        await document.exitFullscreen?.();
-        try {
-          // @ts-expect-error vendor/experimental
-          (screen.orientation as any)?.unlock?.();
-        } catch {
-          // ignore
-        }
-        setForceLandscape(false);
-      }
-    } catch {
-      // ignore
-    }
-  }, [updateForceLandscape]);
-
   const [, setLocation] = useLocation();
 
   const mode = useMemo(() => {
@@ -135,34 +74,6 @@ export default function Game() {
   // BGM（用户可放置 client/public/audio/bgm2.mp3）
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
-
-
-  const softResumeAudio = useCallback(() => {
-    // Only try to resume when user already allowed audio
-    if (audioBlocked) return;
-    try {
-      sfxCtxRef.current?.resume?.().catch?.(() => void 0);
-    } catch {
-      // ignore
-    }
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) {
-      a.play().catch(() => void 0);
-    }
-  }, [audioBlocked]);
-
-  // Mobile browsers may pause audio on tab/background or memory pressure; try to recover on visibility.
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === "visible") {
-        softResumeAudio();
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [softResumeAudio]);
-
 
   // SFX：不依赖外部素材，使用 WebAudio 生成（吃/死亡/暴涨提示）
   const sfxCtxRef = useRef<AudioContext | null>(null);
@@ -214,22 +125,6 @@ export default function Game() {
     audio.preload = 'auto';
     audioRef.current = audio;
 
-
-    const tryRecover = () => {
-      const a = audioRef.current;
-      if (!a) return;
-      // Only attempt recovery if user already allowed audio
-      if (sessionStorage.getItem('snake_autoplay_audio') !== '1') return;
-      a.load();
-      a.play().then(() => setAudioBlocked(false)).catch(() => void 0);
-    };
-
-    // Some mobile browsers may silently stall; try to recover
-    audio.addEventListener('stalled', tryRecover);
-    audio.addEventListener('waiting', tryRecover);
-    audio.addEventListener('error', tryRecover);
-
-
     const shouldAuto = sessionStorage.getItem('snake_autoplay_audio') === '1';
     if (shouldAuto) {
       audio.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
@@ -239,15 +134,7 @@ export default function Game() {
 
     return () => {
       try {
-        
-      try {
-        audio.removeEventListener('stalled', tryRecover);
-        audio.removeEventListener('waiting', tryRecover);
-        audio.removeEventListener('error', tryRecover);
-      } catch {
-        // ignore
-      }
-audio.pause();
+        audio.pause();
         // 释放资源
         audio.src = '';
       } catch {
@@ -593,7 +480,7 @@ if (msg.type === 'pause_proposal') {
   );
 
   return (
-    <div ref={rootRef} onPointerDownCapture={softResumeAudio}
+    <div
       className="relative overflow-hidden min-h-[100dvh] text-[#e0e0e0] p-3 md:p-6 pb-36 md:pb-6"
       style={{
         backgroundImage: `url(/background/1.png)`,
@@ -604,23 +491,7 @@ if (msg.type === 'pause_proposal') {
     >
       {/* UI 叠一层暗色，避免背景影响可读性 */}
       <div className="absolute inset-0 bg-[#0f1419]/70 pointer-events-none" />
-      <div
-        className="relative"
-        style={
-          forceLandscape
-            ? {
-                position: "fixed",
-                top: "50%",
-                left: "50%",
-                width: "100vh",
-                height: "100vw",
-                transform: "translate(-50%, -50%) rotate(90deg)",
-                transformOrigin: "center",
-                overflow: "hidden",
-              }
-            : undefined
-        }
-      >
+      <div className="relative">
       <div className="max-w-6xl mx-auto">
         {/* 音乐提示 */}
         {audioBlocked && (
@@ -770,8 +641,6 @@ if (msg.type === 'pause_proposal') {
             onRestart={handleRestart}
             onHome={handleHome}
             hidePause={false}
-            onFullscreenToggle={toggleFullscreen}
-            isFullscreen={isFullscreen}
           />
         </div>
 
@@ -801,8 +670,8 @@ if (msg.type === 'pause_proposal') {
       </div>
 
       {/* 手机：单摇杆（左下角） */}
-      <VirtualJoystick onStick={handleStick} label="MOVE" />
-      </div>
+      <VirtualJoystick side="left" onStick={handleStick} />
+            </div>
     </div>
   );
 }

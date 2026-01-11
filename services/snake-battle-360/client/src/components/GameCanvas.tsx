@@ -26,36 +26,15 @@ let bgFailed = false;
 function ensureBackgroundLoaded() {
   if (bgImg || bgFailed) return;
   const img = new Image();
-
-  // Hint browser to prioritize decode/fetch (best-effort; some browsers ignore)
-  (img as any).decoding = "async";
-  (img as any).loading = "eager";
-  (img as any).fetchPriority = "high";
-
-  const markReady = () => {
+  img.onload = () => {
     bgImg = img;
     bgReady = true;
-  };
-
-  img.onload = () => {
-    // decode() helps reduce "first frame shows blank background" on some devices
-    const anyImg = img as any;
-    if (typeof anyImg.decode === "function") {
-      anyImg.decode().then(markReady).catch(markReady);
-    } else {
-      markReady();
-    }
   };
   img.onerror = () => {
     bgFailed = true;
   };
-
   img.src = BG_URL;
 }
-
-
-// Start loading background ASAP (before React mount)
-ensureBackgroundLoaded();
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -273,6 +252,11 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
   const camRef = useRef({ x: 0, y: 0, scale: 1 });
 
+  const latestStateRef = useRef<GameState>(gameState);
+  const mySnakeIdRef = useRef<string | null | undefined>(mySnakeId);
+  const stickPropRef = useRef<typeof myStickRef>(myStickRef);
+
+
   const setSnap = (s: GameState) => {
     const now = Date.now();
     if (!aRef.current) {
@@ -284,10 +268,19 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
     bRef.current = { state: s, t: now };
   };
 
-  // update snapshot whenever prop changes (by reference)
+  // keep refs in sync without restarting render loop
   useEffect(() => {
+    latestStateRef.current = gameState;
     setSnap(gameState);
   }, [gameState]);
+
+  useEffect(() => {
+    mySnakeIdRef.current = mySnakeId;
+  }, [mySnakeId]);
+
+  useEffect(() => {
+    stickPropRef.current = myStickRef;
+  }, [myStickRef]);
 
   // preload bg
   useEffect(() => {
@@ -333,7 +326,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
       const a = aRef.current;
       const b = bRef.current;
-      let renderState = gameState;
+      let renderState = (bRef.current?.state ?? aRef.current?.state ?? latestStateRef.current);
 
       if (a && b && b.t !== a.t) {
         const rt = Date.now() - INTERP_DELAY;
@@ -342,8 +335,10 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
         // tiny local prediction using time since last snapshot
         const lag = clamp(Date.now() - b.t, 0, 80);
-        if (mySnakeId && myStickRef?.current) {
-          renderState = predictLocal(renderState, mySnakeId, myStickRef.current, lag);
+        const myId = mySnakeIdRef.current ?? null;
+      const stick = stickPropRef.current?.current ?? null;
+      if (myId && stick) {
+          renderState = predictLocal(renderState, myId, stick, lag);
         }
       }
 
@@ -352,7 +347,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       ctx.clearRect(0, 0, w, h);
 
       // Camera follow
-      const me = getMySnake(renderState, mySnakeId);
+      const me = getMySnake(renderState, myId);
       const focus = me?.body[0] || { x: renderState.worldWidth / 2, y: renderState.worldHeight / 2 };
       const len = me?.length || 220;
       const targetScale = clamp(1 / (1 + len / 950), 0.34, 1.0);
@@ -384,8 +379,8 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
 
       // snakes (draw others first)
       const snakes = renderState.snakes.slice().sort((x, y) => {
-        if (mySnakeId && x.id === mySnakeId) return 1;
-        if (mySnakeId && y.id === mySnakeId) return -1;
+        if (myId && x.id === myId) return 1;
+        if (myId && y.id === myId) return -1;
         return 0;
       });
       for (const s of snakes) {
@@ -403,7 +398,7 @@ export function GameCanvas({ gameState, mySnakeId, myStickRef }: Props) {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [gameState, mySnakeId, myStickRef]);
+  }, []);
 
   return <canvas ref={canvasRef} style={style} />;
 }
