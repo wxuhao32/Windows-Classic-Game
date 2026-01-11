@@ -94,7 +94,7 @@ export const SEGMENT_SPACING = 8; // segment-to-segment target spacing
 export const START_LENGTH = 220; // units
 
 export const BASE_SPEED = 170; // units/sec
-export const MAX_TURN_RATE = Math.PI * 3.6; // rad/sec (≈648°/s)
+export const MAX_TURN_RATE = Math.PI * 3.6; // rad/sec (≈648°/s) — 更接近手游手感
 
 export const FOOD_TARGET = 160;
 export const FOOD_SPAWN_PER_TICK = 4;
@@ -220,7 +220,7 @@ export function initializeGame(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW
   return state;
 }
 
-export function initializeArena(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW_HEIGHT_DEFAULT, snakeCount = 18): GameState {
+export function initializeArena(viewWidth = VIEW_WIDTH_DEFAULT, viewHeight = VIEW_HEIGHT_DEFAULT, snakeCount = 4): GameState {
   const snakes: Snake[] = [];
   for (let i = 0; i < snakeCount; i++) {
     const pos: Vec2 = {
@@ -369,22 +369,18 @@ export function setSnakeStick(state: GameState, snakeId: string, stick: Vec2) {
   const snake = state.snakes.find((s) => s.id === snakeId);
   if (!snake || !snake.isAlive) return;
 
-  // 更“跟手”的摇杆映射：
-  // - 更小 deadzone
-  // - deadzone 后重映射到 [0..1]
-  // - 使用轻微曲线提升中段灵敏度
-  const dead = 0.06;
-
-  const mag = clamp(len(stick), 0, 1);
-  if (mag < dead) {
+  // 更跟手的摇杆映射：更小死区 + 死区后重映射 + sqrt 曲线提升中段灵敏度
+  const deadzone = 0.06;
+  const m = clamp(len(stick), 0, 1);
+  if (m < deadzone) {
     snake.steerStrength = 0;
     snake.targetAngle = snake.angle;
     return;
   }
 
-  const strength = clamp((mag - dead) / (1 - dead), 0, 1);
-  const curved = Math.pow(strength, 0.55);
-  snake.steerStrength = curved;
+  const strength01 = clamp((m - deadzone) / (1 - deadzone), 0, 1);
+  const strength = Math.sqrt(strength01); // 中段更灵敏
+  snake.steerStrength = strength;
 
   const v = norm(stick);
   snake.targetAngle = Math.atan2(v.y, v.x);
@@ -488,7 +484,7 @@ export function updateGame(state: GameState, dtMs: number) {
   for (const s of state.snakes) {
     if (!s.isAlive) continue;
 
-    const maxDelta = MAX_TURN_RATE * dt * (0.30 + 0.70 * clamp(s.steerStrength || 0, 0, 1));
+    const maxDelta = MAX_TURN_RATE * dt * (0.55 + 0.45 * clamp(s.steerStrength || 0, 0, 1));
     if (s.targetAngle !== undefined) {
       s.angle = rotateTowards(s.angle, s.targetAngle, maxDelta);
     }
@@ -548,7 +544,7 @@ export function updateGame(state: GameState, dtMs: number) {
     const head = s.body[0];
     for (let i = state.food.length - 1; i >= 0; i--) {
       const f = state.food[i];
-      if (dist(head, f.position) < s.radius + f.radius + 3.5) {
+      if (dist(head, f.position) < s.radius + f.radius) {
         s.length += f.value;
         s.score += Math.round(f.value);
         state.food.splice(i, 1);
@@ -556,72 +552,27 @@ export function updateGame(state: GameState, dtMs: number) {
     }
   }
 
-  // Keep population close to desiredSnakeCount.
-// For small rooms (e.g. multiplayer 4 snakes), we must NOT grow the snake array unboundedly.
+  // Optional: keep population (respawn AI-only) so the world doesn't get empty.
   const aliveCount = state.snakes.filter((s) => s.isAlive).length;
-  if (aliveCount < state.desiredSnakeCount) {
-    const need = state.desiredSnakeCount - aliveCount;
-
-    // Prefer reviving dead snakes in-place (keeps a fixed snake pool).
-    const deadSnakes = state.snakes.filter((s) => !s.isAlive);
-    for (let i = 0; i < need && i < deadSnakes.length; i++) {
-      const s = deadSnakes[i];
-      const keepOwner = !!s.controlledBy && s.isPlayer;
-
-      const pos: Vec2 = {
-        x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
-        y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
-      };
-      const angle = randomRange(-Math.PI, Math.PI);
-      const forward = angleToVec(angle);
-      const segCount = Math.ceil(START_LENGTH / SEGMENT_SPACING);
-      const body: Vec2[] = [];
-      for (let j = 0; j < segCount; j++) {
-        body.push({
-          x: pos.x - forward.x * j * SEGMENT_SPACING,
-          y: pos.y - forward.y * j * SEGMENT_SPACING,
-        });
-      }
-
-      s.body = body;
-      s.angle = wrapAngle(angle);
-      s.targetAngle = wrapAngle(angle);
-      s.steerStrength = 0;
-      s.speed = BASE_SPEED;
-      s.radius = SNAKE_RADIUS;
-      s.length = START_LENGTH;
-      s.score = 0;
-      s.isAlive = true;
-
-      if (!keepOwner) {
-        s.isPlayer = false;
-        s.controlledBy = undefined;
-        s.playerName = undefined;
-      }
+  if (aliveCount < Math.max(6, Math.floor(state.desiredSnakeCount * 0.6))) {
+    // respawn 1-2 AI per tick if needed
+    const need = Math.min(2, state.desiredSnakeCount - aliveCount);
+    for (let i = 0; i < need; i++) {
+      const id = makeId("ai");
+      state.snakes.push(
+        createSnake({
+          id,
+          position: {
+            x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
+            y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
+          },
+          color: pick(SNAKE_COLORS),
+          isPlayer: false,
+          angle: randomRange(-Math.PI, Math.PI),
+        })
+      );
     }
-
-    // If we still need more and the array is smaller than desired (rare), add new AI.
-    const stillNeed = state.desiredSnakeCount - state.snakes.filter((s) => s.isAlive).length;
-    if (stillNeed > 0 && state.snakes.length < state.desiredSnakeCount) {
-      for (let i = 0; i < stillNeed; i++) {
-        const id = makeId("ai");
-        state.snakes.push(
-          createSnake({
-            id,
-            position: {
-              x: randomRange(state.worldWidth * 0.2, state.worldWidth * 0.8),
-              y: randomRange(state.worldHeight * 0.2, state.worldHeight * 0.8),
-            },
-            color: pick(SNAKE_COLORS),
-            isPlayer: false,
-            angle: randomRange(-Math.PI, Math.PI),
-          })
-        );
-      }
-    }
-  }
-
-  // prevent unbounded growth of snakes array
+    // prevent unbounded growth of snakes array
     if (state.snakes.length > state.desiredSnakeCount * 2) {
       state.snakes = state.snakes.filter((s) => s.isAlive);
     }
