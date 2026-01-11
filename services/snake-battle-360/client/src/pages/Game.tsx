@@ -621,7 +621,7 @@ if (msg.type === 'pause_proposal') {
             </div>
 
             </div>
-          </div>
+        )}
 
         {/* 游戏画布 */}
         <div className="flex justify-center mb-6">
