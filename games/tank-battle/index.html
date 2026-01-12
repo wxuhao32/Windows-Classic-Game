@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>坦克大战</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; }
+    .bar { position: fixed; top: 0; left: 0; right: 0; height: 44px; display:flex; align-items:center; gap:10px;
+           padding: 0 10px; background: rgba(0,0,0,0.55); color: #fff; font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto; z-index: 10; }
+    .bar input { flex: 1; min-width: 140px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
+                 background: rgba(255,255,255,0.08); color: #fff; padding: 0 10px; outline: none; }
+    .bar button { height: 30px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
+                  background: rgba(255,255,255,0.14); color: #fff; padding: 0 10px; cursor: pointer; }
+    .wrap { position: absolute; inset: 0; padding-top: 44px; }
+    iframe { width: 100%; height: 100%; border: 0; background:#000; }
+    .hint { position: absolute; inset: 44px 0 0 0; display:none; place-items:center; color:#fff; text-align:center; padding: 16px; }
+    .hint code { background: rgba(255,255,255,0.12); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span>坦克大战</span>
+    <input id="url" placeholder="粘贴你的坦克大战地址，如 https://tank.example.com" />
+    <button id="save">保存并加载</button>
+  </div>
+  <div class="wrap">
+    <iframe id="frame" src="about:blank" allow="fullscreen; gamepad" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    <div class="hint" id="hint">
+      <div>
+        <div style="font-size:16px;margin-bottom:8px;">需要先配置坦克大战地址</div>
+        <div style="opacity:.85">
+          你需要把坦克大战项目部署到 Render / GitHub Pages / 任何静态托管，得到一个地址。<br/>
+          然后在上方输入框粘贴，例如：<code>https://tank.yourdomain.com</code> 并点击“保存并加载”。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "tank_battle_url";
+    const DEFAULT_URL = ""; // 你也可以在这里填一个默认地址
+
+    const input = document.getElementById("url");
+    const bar = document.querySelector(".bar");
+    const wrap = document.querySelector(".wrap");
+    const frame = document.getElementById("frame");
+    const hint = document.getElementById("hint");
+    const save = document.getElementById("save");
+
+    function normalize(u){
+      if (!u) return "";
+      u = u.trim();
+      if (!u) return "";
+      if (u.startsWith("ws://")) u = "http://" + u.slice(5);
+      if (u.startsWith("wss://")) u = "https://" + u.slice(6);
+      u = u.replace(/\/ws\/?$/,"");
+      u = u.replace(/\/+$/,"");
+      return u;
+    }
+
+    function loadUrl(u){
+      u = normalize(u);
+      if (!u){
+        hint.style.display = "grid";
+        frame.src = "about:blank";
+        return;
+      }
+      hint.style.display = "none";
+      frame.src = u + "/";
+    }
+
+    const saved = normalize(localStorage.getItem(STORAGE_KEY));
+    const urlFromQuery = new URL(location.href).searchParams.get("url");
+
+    if (urlFromQuery && bar && wrap) {
+      bar.style.display = "none";
+      wrap.style.paddingTop = "0";
+    }
+
+    const initial = normalize(urlFromQuery || saved || DEFAULT_URL);
+    input.value = initial;
+
+    loadUrl(initial);
+
+    save.addEventListener("click", () => {
+      const u = normalize(input.value);
+      if (!u) return loadUrl("");
+      localStorage.setItem(STORAGE_KEY, u);
+      loadUrl(u);
+    });
+  </script>
+</body>
+</html>

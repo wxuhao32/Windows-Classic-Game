@@ -19,6 +19,9 @@
 
     // ✅ 360° 联机贪吃蛇（独立服务，通过 wrapper 打开首页，不再默认跳到联机界面）
     "snakeBattle": { title: "贪吃蛇大作战", src: "../games/snake-battle-360/index.html?url=https://tanchishe-ezxi.onrender.com", icon: "./assets/icon-snake.svg" },
+    // ✅ 坦克大战（独立静态站点，通过 wrapper 打开）
+    "tankBattle": { title: "坦克大战", src: "../games/tank-battle/index.html", icon: "./assets/icon-tank.svg" },
+
 
     "tetris": { title: "俄罗斯方块", src: "../games/tetris/index.html", icon: "./assets/icon-tetris.svg" },
     "solitaire": { title: "纸牌接龙", src: "../games/solitaire/index.html", icon: "./assets/icon-solitaire.svg" },
@@ -322,4 +325,4 @@ icons.forEach(btn => {
       bringToFront(last, found ? found[0] : "");
     }
   });
-})();
+ })();
