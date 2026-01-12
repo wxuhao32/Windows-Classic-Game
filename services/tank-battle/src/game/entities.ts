@@ -58,7 +58,7 @@ export class Tank {
   }
 
   getColor(): string {
-    if (this.isPlayer) return COLORS.p1;
+    if (this.isPlayer) return this.id === 'p2' ? COLORS.p2 : COLORS.p1;
     switch (this.type) {
       case TankType.LIGHT: return COLORS.enemyFast;
       case TankType.HEAVY: return COLORS.enemyHeavy;

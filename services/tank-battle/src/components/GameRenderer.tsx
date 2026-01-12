@@ -6,9 +6,11 @@ import { TileType, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT
 
 interface GameRendererProps {
   engine: GameEngine;
+  /** 是否由渲染器驱动引擎 update（联机观战端可关闭） */
+  driveEngine?: boolean;
 }
 
-export const GameRenderer: React.FC<GameRendererProps> = ({ engine }) => {
+export const GameRenderer: React.FC<GameRendererProps> = ({ engine, driveEngine = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const bgRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,6 +56,14 @@ export const GameRenderer: React.FC<GameRendererProps> = ({ engine }) => {
       }
     }
 
+    // Render 2P（联机）
+    const rp = (engine as any).remotePlayer;
+    if (rp) {
+      const blink2 = rp.isInvincible && Math.floor(Date.now() / 100) % 2 === 0;
+      if (!blink2) renderTank(ctx, rp.x, rp.y, rp.direction, rp.getColor());
+      if (rp.isInvincible) renderShield(ctx, rp.x, rp.y);
+    }
+
     for (const enemy of engine.enemies) {
       renderTank(ctx, enemy.x, enemy.y, enemy.direction, enemy.getColor());
     }
@@ -93,7 +103,9 @@ export const GameRenderer: React.FC<GameRendererProps> = ({ engine }) => {
       // Cap dt to prevent spiral of death
       const cappedDt = Math.min(dt, 0.05);
 
-      engine.update(cappedDt);
+      if (driveEngine) {
+        engine.update(cappedDt);
+      }
 
       // 相机震动：通过容器平移（不影响 UI 层）
       const cs = (engine as any).cameraShake;

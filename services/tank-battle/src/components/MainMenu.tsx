@@ -1,151 +1,53 @@
-// Main Menu Component
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { OnlineRoomModal, type OnlineRoomResult } from './OnlineRoomModal';
 
 interface MainMenuProps {
   onStartGame: () => void;
+  onStartOnline: (r: OnlineRoomResult) => void;
   onOpenSettings: () => void;
 }
 
-export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, onOpenSettings }) => {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [blink, setBlink] = useState(true);
-  const [showMultiplayerModal] = useState(false);
-
-  const menuItems = ['开始游戏', '设置'];
-
-  useEffect(() => {
-    const interval = setInterval(() => setBlink(b => !b), 500);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showMultiplayerModal) {
-        if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') {
-          setShowMultiplayerModal(false);
-        }
-        return;
-      }
-
-      switch (e.code) {
-        case 'ArrowUp':
-        case 'KeyW':
-          setSelectedIndex(i => (i - 1 + menuItems.length) % menuItems.length);
-          break;
-        case 'ArrowDown':
-        case 'KeyS':
-          setSelectedIndex(i => (i + 1) % menuItems.length);
-          break;
-        case 'Enter':
-          if (selectedIndex === 0) onStartGame();
-          else if (selectedIndex === 1) onOpenSettings();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIndex, showMultiplayerModal]);
-
-  const handleSelect = (index: number) => {
-    switch (index) {
-      case 0:
-        onStartGame();
-        break;
-      case 1:
-        setShowMultiplayerModal(true);
-        break;
-      case 2:
-        onOpenSettings();
-        break;
-    }
-  };
+export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, onStartOnline, onOpenSettings }) => {
+  const [showOnline, setShowOnline] = useState(false);
 
   return (
-    <div 
-      className="fixed inset-0 bg-black flex flex-col items-center justify-center"
-      style={{ fontFamily: '"Press Start 2P", monospace' }}
-    >
-      {/* Title */}
-      <div className="mb-16">
-        <h1 
-          className="text-white text-center leading-tight"
-          style={{ fontSize: 28 }}
-        >
-          <span className="text-yellow-400">TANK</span>
-          <br />
-          <span className="text-green-400">BATTLE</span>
-        </h1>
-        <p className="text-gray-500 text-center mt-4" style={{ fontSize: 10 }}>
-          2026
-        </p>
-      </div>
-
-      {/* Menu Items */}
-      <div className="flex flex-col gap-4 items-start">
-        {menuItems.map((item, index) => (
-          <button
-            key={item}
-            onClick={() => handleSelect(index)}
-            className={`flex items-center gap-4 text-white hover:text-yellow-400 transition-colors ${
-              selectedIndex === index ? 'text-yellow-400' : ''
-            }`}
-            style={{ fontSize: 14 }}
-            onMouseEnter={() => setSelectedIndex(index)}
-          >
-            <span className="w-8">
-              {selectedIndex === index && blink ? '>' : ' '}
-            </span>
-            {item}
-          </button>
-        ))}
-      </div>
-
-      {/* Controls hint */}
-      <div 
-        className="absolute bottom-8 text-gray-600 text-center"
-        style={{ fontSize: 8 }}
-      >
-        <p>ARROWS/WASD - MOVE</p>
-        <p>SPACE/J - FIRE</p>
-        <p>ESC/P - PAUSE</p>
-      </div>
-
-      {/* Copyright */}
-      <p 
-        className="absolute bottom-4 text-gray-700"
-        style={{ fontSize: 8 }}
-      >
-        MINIMAX CORP 2026
-      </p>
-
-      {/* Multiplayer Modal */}
-      {showMultiplayerModal && (
-        <div 
-          className="fixed inset-0 bg-black/90 flex items-center justify-center z-50"
-          onClick={() => setShowMultiplayerModal(false)}
-        >
-          <div 
-            className="bg-gray-900 border-4 border-white/40 p-8 text-center"
-            onClick={e => e.stopPropagation()}
-          >
-            <h2 className="text-white mb-4" style={{ fontSize: 14 }}>
-              双人模式 MODE
-            </h2>
-            <p className="text-yellow-400 mb-6" style={{ fontSize: 12 }}>
-              敬请期待!
-            </p>
-            <button
-              onClick={() => setShowMultiplayerModal(false)}
-              className="px-4 py-2 border-2 border-white/40 text-white hover:bg-white/20"
-              style={{ fontSize: 10 }}
-            >
-              OK
-            </button>
-          </div>
+    <div className="w-full h-full flex items-center justify-center bg-black text-white">
+      <div className="w-full max-w-md px-6">
+        <div className="text-center mb-10">
+          <div className="text-3xl font-extrabold tracking-wider">坦克大战</div>
+          <div className="mt-2 text-white/50 text-sm">科技·军事风 / iframe 友好 / 可联机扩展</div>
         </div>
+
+        <div className="flex flex-col gap-3">
+          <MenuButton onClick={onStartGame}>开始游戏</MenuButton>
+          <MenuButton onClick={() => setShowOnline(true)}>联机对战</MenuButton>
+          <MenuButton onClick={onOpenSettings}>设置</MenuButton>
+        </div>
+
+        <div className="mt-10 text-center text-xs text-white/45">
+          提示：移动端使用左侧摇杆移动，右侧按钮开火/技能；大厅可通过 window.tankGame 控制暂停/继续。
+        </div>
+      </div>
+
+      {showOnline && (
+        <OnlineRoomModal
+          onClose={() => setShowOnline(false)}
+          onSubmit={(r) => {
+            setShowOnline(false);
+            onStartOnline(r);
+          }}
+        />
       )}
     </div>
   );
 };
+
+const MenuButton: React.FC<React.PropsWithChildren<{ onClick: () => void }>> = ({ onClick, children }) => (
+  <button
+    onClick={onClick}
+    className="w-full rounded-2xl bg-white/6 border border-white/10 hover:bg-white/10 px-6 py-3 font-semibold
+      active:scale-[0.98] transition"
+  >
+    {children}
+  </button>
+);

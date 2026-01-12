@@ -2,6 +2,7 @@
 
 import { Direction, TileType, TankType, PowerUpType, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './types';
 import type { InputState } from './input';
+import type { EngineSnapshot, TankNet, BulletNet, ExplosionNet, PowerUpNet } from '../shared/protocol';
 import { Tank, Bullet, Explosion, PowerUp, createBullet, resetBullet, createExplosion, resetExplosion, createPowerUp } from './entities';
 import { ObjectPool } from './ObjectPool';
 import { findPath } from './AStar';
@@ -106,6 +107,16 @@ export class GameEngine {
     fire: false, special: false,
   };
 
+  // Multiplayer (2P) support
+  public multiplayerEnabled: boolean = false;
+  public multiplayerMode: 'pvp' | 'coop' = 'pvp';
+  public remotePlayer: Tank | null = null;
+  private remoteInputState = {
+    up: false, down: false, left: false, right: false,
+    fire: false, special: false,
+  };
+
+
   // Frozen enemies timer
   private frozenTimer: number = 0;
 
@@ -124,15 +135,39 @@ export class GameEngine {
     this.state.baseDestroyed = false;
     this.loadLevel(level);
   }
+/** 开启/关闭 2 人联机模式（只改变关卡加载/碰撞逻辑，不绑定具体网络实现） */
+setMultiplayerEnabled(enabled: boolean): void {
+  this.multiplayerEnabled = enabled;
+}
+
+/** 给 2P 设置输入（由网络层或本地设备提供） */
+setRemoteInput(key: 'up'|'down'|'left'|'right'|'fire'|'special', pressed: boolean): void {
+  (this.remoteInputState as any)[key] = pressed;
+}
+
+
 
   loadLevel(levelIndex: number): void {
     const levelData = LEVELS[levelIndex % LEVELS.length];
     this.map = levelData.map(row => [...row]);
 
-    // Spawn player
-    const spawn = getPlayerSpawn();
-    this.player = new Tank('player', spawn.x, spawn.y, TankType.NORMAL, true);
-    this.player.setInvincible(3000);
+    // Spawn player(s)
+const spawn = getPlayerSpawn();
+this.player = new Tank('p1', spawn.x, spawn.y, TankType.NORMAL, true);
+this.player.setInvincible(3000);
+
+if (this.multiplayerEnabled && this.multiplayerMode === 'pvp') {
+  // 2P 出生点（尽量对称，避免重叠）
+  this.remotePlayer = new Tank('p2', 18, 24, TankType.NORMAL, true);
+  this.remotePlayer.setInvincible(3000);
+
+  // 联机对战默认不刷 AI 敌人（先保证可玩与稳定）
+  this.enemies.length = 0;
+  this.enemySpawn.length = 0;
+  this.state.enemiesRemaining = 0;
+} else {
+  this.remotePlayer = null;
+}
 
     // Setup enemy spawns
     this.enemySpawns = [...LEVEL_ENEMIES[levelIndex % LEVEL_ENEMIES.length]];
@@ -165,13 +200,21 @@ export class GameEngine {
     }
 
     // Spawn enemies
-    this.updateEnemySpawns();
+    if (!this.multiplayerEnabled || this.multiplayerMode === 'coop') {
+      this.updateEnemySpawns();
+    }
 
     // Update player
     if (this.player) {
       this.updatePlayerInput(dt);
       this.player.update(dt);
     }
+
+// Update 2P（联机）
+if (this.multiplayerEnabled && this.remotePlayer) {
+  this.updateRemotePlayerInput(dt);
+  this.remotePlayer.update(dt);
+}
 
     // Update enemies
     if (this.frozenTimer > 0) {
@@ -431,10 +474,38 @@ export class GameEngine {
   }
 
   private checkBulletTankCollision(bullet: Bullet): boolean {
-    const isPlayerBullet = bullet.ownerId === 'player';
+const isP1 = bullet.ownerId === 'p1';
+const isP2 = bullet.ownerId === 'p2';
 
-    // Player bullet hits enemies
-    if (isPlayerBullet) {
+// 联机对战（PVP）：P1/P2 互相命中
+if (this.multiplayerEnabled) {
+  if (isP1 && this.remotePlayer && this.bulletHitsTank(bullet, this.remotePlayer)) {
+    if (!this.remotePlayer.isInvincible) {
+      const destroyed = this.remotePlayer.takeDamage();
+      if (destroyed) {
+        this.createExplosion(this.remotePlayer.x * TILE_SIZE, this.remotePlayer.y * TILE_SIZE, false);
+        this.state.scene = 'gameover';
+      }
+    }
+    this.reduceBulletCount(bullet.ownerId);
+    return true;
+  }
+  if (isP2 && this.player && this.bulletHitsTank(bullet, this.player)) {
+    if (!this.player.isInvincible) {
+      const destroyed = this.player.takeDamage();
+      if (destroyed) {
+        this.createExplosion(this.player.x * TILE_SIZE, this.player.y * TILE_SIZE, false);
+        this.state.scene = 'gameover';
+      }
+    }
+    this.reduceBulletCount(bullet.ownerId);
+    return true;
+  }
+}
+
+// Player bullet hits enemies (单机/联机均可)
+if (isP1 || isP2) {
+
       for (let i = this.enemies.length - 1; i >= 0; i--) {
         const enemy = this.enemies[i];
         if (this.bulletHitsTank(bullet, enemy)) {
@@ -453,7 +524,7 @@ export class GameEngine {
         }
       }
     } else {
-      // Enemy bullet hits player
+      // Enemy bullet hits player（AI 子弹）
       if (this.player && this.bulletHitsTank(bullet, this.player)) {
         if (!this.player.isInvincible) {
           const destroyed = this.player.takeDamage();
@@ -480,8 +551,10 @@ export class GameEngine {
   }
 
   private reduceBulletCount(ownerId: string): void {
-    if (ownerId === 'player' && this.player) {
+    if (ownerId === 'p1' && this.player) {
       this.player.activeBullets = Math.max(0, this.player.activeBullets - 1);
+    } else if (ownerId === 'p2' && this.remotePlayer) {
+      this.remotePlayer.activeBullets = Math.max(0, this.remotePlayer.activeBullets - 1);
     } else {
       const enemy = this.enemies.find(e => e.id === ownerId);
       if (enemy) enemy.activeBullets = Math.max(0, enemy.activeBullets - 1);
@@ -595,7 +668,7 @@ export class GameEngine {
 
   private respawnPlayer(): void {
     const spawn = getPlayerSpawn();
-    this.player = new Tank('player', spawn.x, spawn.y, TankType.NORMAL, true);
+    this.player = new Tank('p1', spawn.x, spawn.y, TankType.NORMAL, true);
     this.player.setInvincible(3000);
   }
 
@@ -645,5 +718,117 @@ export class GameEngine {
     // @ts-ignore - existing method
     this.updatePowerUps(dt);
   }
+
+/** 导出可序列化快照（房主端发送） */
+toNetworkSnapshot(): EngineSnapshot {
+  const tankToNet = (tk: Tank | null): TankNet | null => {
+    if (!tk) return null;
+    return {
+      id: tk.id,
+      x: tk.x,
+      y: tk.y,
+      direction: tk.direction,
+      type: tk.type,
+      isPlayer: tk.isPlayer,
+      health: tk.health,
+      activeBullets: tk.activeBullets,
+      isInvincible: tk.isInvincible,
+      invincibleTimer: tk.invincibleTimer,
+      fireLevel: tk.fireLevel,
+      moveCooldown: tk.moveCooldown,
+      fireCooldown: tk.fireCooldown,
+      onIce: tk.onIce,
+      vx: tk.velocity?.vx,
+      vy: tk.velocity?.vy,
+    };
+  };
+
+  const map = this.map.map(row => [...row]);
+
+  const bullets: BulletNet[] = this.bulletPool.getActive()
+    .filter(b => (b as any).active)
+    .map(b => ({ ...(b as any) })) as any;
+
+  const explosions: ExplosionNet[] = this.explosionPool.getActive()
+    .filter(e => (e as any).active)
+    .map(e => ({ ...(e as any) })) as any;
+
+  const powerUps: PowerUpNet[] = this.powerUps.map(p => ({ ...(p as any) })) as any;
+
+  return {
+    t: Date.now(),
+    level: this.state.level,
+    map,
+    p1: tankToNet(this.player),
+    p2: tankToNet(this.remotePlayer),
+    enemies: this.enemies.map(e => tankToNet(e)!).filter(Boolean) as any,
+    bullets,
+    explosions,
+    powerUps,
+    baseDestroyed: this.state.baseDestroyed,
+    score: this.state.score,
+  };
+}
+
+/** 应用网络快照（非房主端渲染使用） */
+applyNetworkSnapshot(s: EngineSnapshot): void {
+  this.multiplayerEnabled = true;
+
+  this.state.scene = 'game';
+  this.state.level = s.level;
+  this.state.score = s.score;
+  this.state.baseDestroyed = s.baseDestroyed;
+
+  this.map = s.map.map(row => [...row]);
+
+  const applyTank = (existing: Tank | null, data: TankNet | null): Tank | null => {
+    if (!data) return null;
+    const tk = existing ?? new Tank(data.id, data.x, data.y, data.type, !!data.isPlayer);
+    tk.id = data.id;
+    tk.x = data.x;
+    tk.y = data.y;
+    tk.direction = data.direction;
+    tk.type = data.type;
+    tk.isPlayer = !!data.isPlayer;
+    tk.health = data.health;
+    tk.activeBullets = data.activeBullets;
+    tk.isInvincible = data.isInvincible;
+    tk.invincibleTimer = data.invincibleTimer;
+    tk.fireLevel = data.fireLevel;
+    tk.moveCooldown = data.moveCooldown;
+    tk.fireCooldown = data.fireCooldown;
+    tk.onIce = !!data.onIce;
+    if (tk.velocity) {
+      tk.velocity.vx = data.vx ?? 0;
+      tk.velocity.vy = data.vy ?? 0;
+    }
+    return tk;
+  };
+
+  this.player = applyTank(this.player, s.p1);
+  this.remotePlayer = applyTank(this.remotePlayer, s.p2);
+
+  // enemies（如果未来要做 coop，可继续沿用）
+  this.enemies = (s.enemies || []).map(d => applyTank(null, d)!).filter(Boolean) as any;
+
+  // bullets
+  this.bulletPool.releaseAll();
+  for (const b of (s.bullets || [])) {
+    const bb = this.bulletPool.acquire() as any;
+    Object.assign(bb, b);
+    bb.active = true;
+  }
+
+  // explosions
+  this.explosionPool.releaseAll();
+  for (const e of (s.explosions || [])) {
+    const ee = this.explosionPool.acquire() as any;
+    Object.assign(ee, e);
+    ee.active = true;
+  }
+
+  // power-ups
+  this.powerUps = (s.powerUps || []).map(p => ({ ...(p as any) })) as any;
+}
 
 }
