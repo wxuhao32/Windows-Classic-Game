@@ -308,7 +308,7 @@
         <div class="start-card">
           <h2>点击开始</h2>
           <p>
-            为了在手机端播放音乐/音效，需要一次用户交互来解锁音频。<br/>
+            为了在手机端播放音乐/音效，需要一次用户交互来解锁音频。音效已内置（击发/受击/爆炸），可在底部开关。<br/>
             背景音乐请放到 <span class="kbd">audio/音乐.mp3</span>（可选）。
           </p>
           <div class="start-row">
@@ -327,6 +327,7 @@
       <div class="btns">
         <button class="btn" id="pauseBtn" title="暂停/继续（P）">暂停</button>
         <button class="btn" id="toggleAudioBtn" title="开启/关闭背景音乐">音乐：开</button>
+        <button class="btn" id="toggleSfxBtn" title="开启/关闭音效">音效：开</button>
         <button class="btn danger" id="restartBtn">重开</button>
       </div>
     </div>
@@ -435,7 +436,10 @@ const CANVAS_SIZE = 512;
 
   class AudioManager {
     constructor() {
-      this.enabled = true;
+      // Separate toggles: BGM and SFX
+      this.bgmEnabled = true;
+      this.sfxEnabled = true;
+
       this.ctx = null;
       this.master = null;
       this._unlocked = false;
@@ -449,6 +453,7 @@ const CANVAS_SIZE = 512;
       if (this._unlocked) return;
       this._unlocked = true;
 
+      // WebAudio for punchy SFX (requires user gesture on mobile)
       try {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
         this.master = this.ctx.createGain();
@@ -457,56 +462,118 @@ const CANVAS_SIZE = 512;
         if (this.ctx.state === "suspended") await this.ctx.resume();
       } catch (_) {
         this.ctx = null;
+        this.master = null;
       }
 
-      try { if (this.enabled) await this.bgm.play(); } catch (_) {}
+      // Try to start BGM (optional file)
+      try { if (this.bgmEnabled) await this.bgm.play(); } catch (_) {}
     }
 
-    setEnabled(on) {
-      this.enabled = on;
-      if (!on) { try { this.bgm.pause(); } catch(_){} }
+    setBgmEnabled(on) {
+      this.bgmEnabled = !!on;
+      if (!this.bgmEnabled) { try { this.bgm.pause(); } catch(_){} }
       else { this.bgm.play().catch(()=>{}); }
     }
 
-    beep({freq=440, dur=0.08, type="square", gain=0.15, bend=0, noise=0} = {}) {
-      if (!this.enabled) return;
-      if (!this.ctx || !this.master) return;
+    setSfxEnabled(on) {
+      this.sfxEnabled = !!on;
+    }
 
+    // --- SFX synth ---
+    _ensure() {
+      return !!(this.sfxEnabled && this.ctx && this.master);
+    }
+
+    _tone({freq=440, dur=0.06, type="square", gain=0.12, bend=0, attack=0.004, release=0.04} = {}) {
+      if (!this._ensure()) return;
       const t0 = this.ctx.currentTime;
       const t1 = t0 + dur;
 
       const g = this.ctx.createGain();
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + attack);
       g.gain.exponentialRampToValueAtTime(0.0001, t1);
 
-      if (noise > 0) {
-        const bufferSize = Math.floor(this.ctx.sampleRate * dur);
-        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1)*noise;
-        const src = this.ctx.createBufferSource();
-        src.buffer = buffer;
-        src.connect(g);
-        g.connect(this.master);
-        src.start(t0);
-        src.stop(t1);
-      }
+      const o = this.ctx.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, t0);
+      if (bend !== 0) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + bend), t1);
 
-      const osc = this.ctx.createOscillator();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, t0);
-      if (bend !== 0) osc.frequency.exponentialRampToValueAtTime(Math.max(30, freq + bend), t1);
-
-      osc.connect(g);
+      o.connect(g);
       g.connect(this.master);
-      osc.start(t0);
-      osc.stop(t1);
+      o.start(t0);
+      o.stop(t1);
     }
 
-    sfxShoot(){ this.beep({freq: 920, dur: 0.055, type:"square", gain:0.12, bend:-260}); }
-    sfxHit(){ this.beep({freq: 220, dur: 0.085, type:"sawtooth", gain:0.13, bend:-110, noise:0.34}); }
-    sfxBoom(){ this.beep({freq: 150, dur: 0.18, type:"triangle", gain:0.18, bend:-70, noise:0.46}); }
+    _noise({dur=0.06, gain=0.12, highpass=0, lowpass=0} = {}) {
+      if (!this._ensure()) return;
+      const t0 = this.ctx.currentTime;
+      const t1 = t0 + dur;
+
+      const bufferSize = Math.max(64, Math.floor(this.ctx.sampleRate * dur));
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1);
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+
+      let node = src;
+
+      if (highpass > 0) {
+        const hp = this.ctx.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = highpass;
+        node.connect(hp);
+        node = hp;
+      }
+      if (lowpass > 0) {
+        const lp = this.ctx.createBiquadFilter();
+        lp.type = "lowpass";
+        lp.frequency.value = lowpass;
+        node.connect(lp);
+        node = lp;
+      }
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+      node.connect(g);
+      g.connect(this.master);
+
+      src.start(t0);
+      src.stop(t1);
+    }
+
+    // Punchy arcade sounds (shoot / hit / boom / player-hit)
+    sfxShoot(){
+      // bright snap + tiny click
+      this._tone({freq: 980, dur: 0.045, type:"square", gain:0.10, bend:-420, attack:0.003, release:0.03});
+      this._tone({freq: 520, dur: 0.06, type:"triangle", gain:0.055, bend:-90, attack:0.002, release:0.05});
+      this._noise({dur: 0.028, gain:0.03, highpass: 1400});
+    }
+
+    sfxHit(){
+      // metal-ish zap + grit
+      this._tone({freq: 260, dur: 0.07, type:"sawtooth", gain:0.10, bend:-140, attack:0.002, release:0.06});
+      this._tone({freq: 110, dur: 0.09, type:"square", gain:0.05, bend:-40, attack:0.002, release:0.08});
+      this._noise({dur: 0.06, gain:0.06, highpass: 500, lowpass: 3800});
+    }
+
+    sfxPlayerHit(){
+      // heavier thud for player feedback
+      this._tone({freq: 150, dur: 0.09, type:"triangle", gain:0.13, bend:-55, attack:0.002, release:0.08});
+      this._noise({dur: 0.08, gain:0.07, highpass: 250, lowpass: 2200});
+    }
+
+    sfxBoom(){
+      // low boom + hiss tail
+      this._tone({freq: 140, dur: 0.18, type:"triangle", gain:0.16, bend:-80, attack:0.002, release:0.16});
+      this._tone({freq: 70, dur: 0.22, type:"sine", gain:0.08, bend:-20, attack:0.002, release:0.20});
+      this._noise({dur: 0.16, gain:0.10, highpass: 180, lowpass: 2400});
+    }
   }
 
   class Particle {
@@ -835,7 +902,7 @@ const CANVAS_SIZE = 512;
   }
 
   class Bullet {
-    constructor(owner, x, y, vx, vy) {
+    constructor(owner, x, y, vx, vy, target=null) {
       this.owner = owner;
       this.x=x; this.y=y;
       this.vx=vx; this.vy=vy;
@@ -844,10 +911,33 @@ const CANVAS_SIZE = 512;
       this.alive = true;
       this.tx = x;
       this.ty = y;
+
+      // Aim-assist: player bullets can softly home towards a locked target
+      this.target = target;
+      this.homing = (owner === "player") && !!target;
     }
 
     update(dt, map, tanks, audio, fx) {
       if (!this.alive) return;
+
+      // Soft homing (helps guarantee hit while keeping bullets physical)
+      if (this.homing && this.target && this.target.alive){
+        const cx = this.x, cy = this.y;
+        const tx = this.target.x + this.target.w/2;
+        const ty = this.target.y + this.target.h/2;
+        const dx = tx - cx, dy = ty - cy;
+        const d = Math.hypot(dx,dy);
+        if (d > 0.001){
+          const dvx = dx / d, dvy = dy / d;
+          // Smoothly steer towards desired direction
+          const steer = 1 - Math.pow(0.05, dt);
+          this.vx = lerp(this.vx, dvx, steer);
+          this.vy = lerp(this.vy, dvy, steer);
+          const m = Math.hypot(this.vx, this.vy) || 1;
+          this.vx /= m; this.vy /= m;
+        }
+      }
+
       this.tx = this.x; this.ty = this.y;
       this.x += this.vx*this.speed*dt;
       this.y += this.vy*this.speed*dt;
@@ -880,7 +970,8 @@ const CANVAS_SIZE = 512;
             audio?.sfxBoom();
             fx?.burstTank(t.x + t.w/2, t.y + t.h/2);
           } else {
-            audio?.sfxHit();
+            if (t.faction === "player") audio?.sfxPlayerHit();
+            else audio?.sfxHit();
           }
           return;
         }
@@ -1005,16 +1096,59 @@ const CANVAS_SIZE = 512;
       this.maxHp = PLAYER_MAX_HP;
       this.hp = this.maxHp;
     }
-    handleInput(dt, map, input, bullets, audio){
+
+    fire(bullets, audio, aimTarget){
+      if (!this.canFire() || !this.alive) return;
+
+      // If aim-assist target exists, shoot towards it (with a homing bullet for "press to hit" feel)
+      let vx = Math.cos(this.angle), vy = Math.sin(this.angle);
+      let target = null;
+
+      if (aimTarget && aimTarget.alive){
+        const cx=this.x+this.w/2, cy=this.y+this.h/2;
+        const tx=aimTarget.x + aimTarget.w/2;
+        const ty=aimTarget.y + aimTarget.h/2;
+        const dx = tx - cx, dy = ty - cy;
+        const d = Math.hypot(dx,dy);
+        if (d > 0.001 && (dx*dx + dy*dy) <= VISION_RADIUS_SQ){
+          vx = dx / d;
+          vy = dy / d;
+          const a = Math.atan2(vy, vx);
+          this.targetAngle = a;
+          this.angle = a;
+          target = aimTarget;
+        }
+      }
+
+      this.fireCooldown = this.fireRate;
+      const cx=this.x+this.w/2, cy=this.y+this.h/2;
+      const off=10;
+      bullets.push(new Bullet(this.faction, cx+vx*off, cy+vy*off, vx, vy, target));
+      audio?.sfxShoot();
+    }
+
+    handleInput(dt, map, input, bullets, audio, aimTarget){
       if (!this.alive) return;
+
       let vx=input.axisX, vy=input.axisY;
       const mag=Math.hypot(vx,vy);
+
       if (mag>0.001){
         vx/=mag; vy/=mag;
         this.targetAngle = Math.atan2(vy, vx);
         this.tryMove(dt, map, vx, vy);
+      } else if (aimTarget && aimTarget.alive){
+        // When standing still, auto-face the locked target to make it feel assisted.
+        const cx=this.x+this.w/2, cy=this.y+this.h/2;
+        const tx=aimTarget.x + aimTarget.w/2;
+        const ty=aimTarget.y + aimTarget.h/2;
+        const dx = tx - cx, dy = ty - cy;
+        if ((dx*dx + dy*dy) <= VISION_RADIUS_SQ){
+          this.targetAngle = Math.atan2(dy, dx);
+        }
       }
-      if (input.firePressed) this.fire(bullets, audio);
+
+      if (input.firePressed) this.fire(bullets, audio, aimTarget);
     }
   }
 
@@ -1193,6 +1327,10 @@ const CANVAS_SIZE = 512;
       this.score=0;
       this.gameOver=false;
       this.paused=false;
+      // Aim-assist (auto lock nearest enemy in sight every 2s)
+      this.aimLockInterval = 2.0;
+      this.aimLockTimer = 999;
+      this.aimTarget = null;
       this.updateHUD();
       if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
     }
@@ -1257,7 +1395,8 @@ const CANVAS_SIZE = 512;
       }
 
       this.player.update(dt);
-      this.player.handleInput(dt, this.map, this.input, this.bullets, this.audio);
+      this.updateAimAssist(dt);
+      this.player.handleInput(dt, this.map, this.input, this.bullets, this.audio, this.aimTarget);
 
       for (const e of this.enemies) e.updateAI(dt, this.map, this.player, this.bullets, this.audio);
 
@@ -1431,6 +1570,7 @@ const CANVAS_SIZE = 512;
   const restartBtn = document.getElementById("restartBtn");
   const pauseBtn = document.getElementById("pauseBtn");
   const toggleAudioBtn = document.getElementById("toggleAudioBtn");
+  const toggleSfxBtn = document.getElementById("toggleSfxBtn");
 
   async function start(){
     overlay.style.display = "none";
@@ -1445,13 +1585,31 @@ const CANVAS_SIZE = 512;
   };
   pauseBtn.addEventListener("click", ()=>game.togglePause());
 
-  let audioOn = true;
+
+  let musicOn = true;
+  let sfxOn = true;
+
+  const syncAudioUI = ()=>{
+    toggleAudioBtn.textContent = musicOn ? "音乐：开" : "音乐：关";
+    if (toggleSfxBtn) toggleSfxBtn.textContent = sfxOn ? "音效：开" : "音效：关";
+  };
+  syncAudioUI();
+
   toggleAudioBtn.addEventListener("click", async ()=>{
-    audioOn = !audioOn;
-    game.audio.setEnabled(audioOn);
-    toggleAudioBtn.textContent = audioOn ? "音乐：开" : "音乐：关";
-    if (audioOn) await game.audio.unlock();
+    musicOn = !musicOn;
+    game.audio.setBgmEnabled(musicOn);
+    syncAudioUI();
+    if (musicOn) await game.audio.unlock();
   });
+
+  if (toggleSfxBtn){
+    toggleSfxBtn.addEventListener("click", async ()=>{
+      sfxOn = !sfxOn;
+      game.audio.setSfxEnabled(sfxOn);
+      syncAudioUI();
+      if (sfxOn) await game.audio.unlock();
+    });
+  }
 
   // Touch controls are available on mobile via #touchBar.
 
