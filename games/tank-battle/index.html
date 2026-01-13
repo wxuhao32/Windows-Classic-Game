@@ -20,6 +20,7 @@
     }
 
     .app{
+      min-height:100dvh;
       height:100%;
       display:grid;
       /* extra row for mobile touch controls (shown only on touch devices) */
@@ -68,7 +69,26 @@
       border:1px solid rgba(255,255,255,0.12);
       background: rgba(11,18,32,0.65);
     }
-    .dot{ width:8px; height:8px; border-radius:99px; background: rgba(255,255,255,0.35); }
+    
+    .pillBtn{
+      cursor:pointer;
+      user-select:none;
+      -webkit-user-select:none;
+      appearance:none;
+      -webkit-appearance:none;
+      border:1px solid rgba(255,255,255,0.12);
+      background: rgba(11,18,32,0.65);
+      color:#e8eef6;
+      font:inherit;
+      line-height:1;
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .pillBtn:hover{ background: rgba(17,28,48,0.82); }
+    .pillBtn:active{ transform: translateY(1px); }
+    .pillBtn .fsIcon{ font-size:14px; margin-top:-1px; }
+.dot{ width:8px; height:8px; border-radius:99px; background: rgba(255,255,255,0.35); }
     .dot.green{ background: rgba(74,222,128,0.95); }
     .dot.blue{ background: rgba(96,165,250,0.95); }
     .dot.red{ background: rgba(255,107,107,0.95); }
@@ -277,6 +297,7 @@
         <div class="pill"><span class="dot green"></span>生命 <b id="hp">4</b>/<b id="hpMax">4</b></div>
         <div class="pill"><span class="dot blue"></span>敌人 <b id="enemies">0</b></div>
         <div class="pill"><span class="dot red"></span>状态 <b id="status">运行中</b></div>
+        <button class="pill pillBtn" id="fullscreenBtn" type="button" title="进入/退出全屏（隐藏浏览器地址栏，解决虚拟按键遮挡）"><span class="fsIcon" aria-hidden="true">⛶</span><span id="fsText">全屏显示</span></button>
       </div>
     </div>
 
@@ -337,7 +358,60 @@
 (() => {
   "use strict";
 
-  const CANVAS_SIZE = 512;
+  // Fullscreen toggle: used to hide browser address bar / UI so mobile virtual buttons are not blocked.
+  const fullscreenBtn = document.getElementById("fullscreenBtn");
+  const fullscreenText = document.getElementById("fsText");
+  const rootEl = document.documentElement;
+  const canRequestFs = !!(rootEl.requestFullscreen || rootEl.webkitRequestFullscreen);
+
+  const updateFsUI = () => {
+    if (!fullscreenBtn) return;
+    const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (fullscreenText) fullscreenText.textContent = on ? "退出全屏" : "全屏显示";
+    fullscreenBtn.disabled = !canRequestFs;
+    fullscreenBtn.style.opacity = canRequestFs ? "" : "0.5";
+    fullscreenBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  };
+
+  const requestFs = async () => {
+    if (!canRequestFs) return;
+    try {
+      if (rootEl.requestFullscreen) {
+        await rootEl.requestFullscreen({ navigationUI: "hide" });
+      } else if (rootEl.webkitRequestFullscreen) {
+        rootEl.webkitRequestFullscreen();
+      }
+    } catch (e) {
+      console.warn("requestFullscreen failed:", e);
+    }
+  };
+
+  const exitFs = async () => {
+    try {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } catch (e) {
+      console.warn("exitFullscreen failed:", e);
+    }
+  };
+
+  if (fullscreenBtn) {
+    fullscreenBtn.addEventListener("click", async () => {
+      const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (on) await exitFs();
+      else await requestFs();
+
+      // Small fallback: some mobile browsers keep a tiny UI bar—nudge scroll a bit.
+      setTimeout(() => window.scrollTo(0, 1), 50);
+      setTimeout(() => window.scrollTo(0, 0), 250);
+    });
+
+    document.addEventListener("fullscreenchange", updateFsUI);
+    document.addEventListener("webkitfullscreenchange", updateFsUI);
+    updateFsUI();
+  }
+
+const CANVAS_SIZE = 512;
   const TILE_SIZE = 16;
   const GRID = CANVAS_SIZE / TILE_SIZE;
 
