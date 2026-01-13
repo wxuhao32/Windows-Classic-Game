@@ -3,57 +3,1385 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>坦克大战（单机）</title>
-  <link rel="stylesheet" href="./style.css" />
+  <title>坦克大战（2000）</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height: 100%; }
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(1200px 900px at 50% -10%, #2b3c68 0%, #0b0f14 45%, #070a0f 100%);
+      color:#e8eef6;
+      overflow:hidden;
+      -webkit-user-select:none;
+      user-select:none;
+      touch-action:none;
+    }
+
+    .app{
+      height:100%;
+      display:grid;
+      /* extra row for mobile touch controls (shown only on touch devices) */
+      grid-template-rows:auto 1fr auto auto;
+      gap:10px;
+      padding:14px 14px calc(14px + env(safe-area-inset-bottom));
+      box-sizing:border-box;
+      max-width:980px;
+      margin:0 auto;
+    }
+
+    .topbar, .footer{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:10px 12px;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(10,14,20,0.55);
+      backdrop-filter: blur(10px);
+      border-radius:14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    .brand{ display:flex; align-items:center; gap:10px; min-width:0; }
+    .logo{
+      width:34px; height:34px; border-radius:10px;
+      background: linear-gradient(135deg, rgba(74,222,128,0.95), rgba(96,165,250,0.95));
+      box-shadow: 0 12px 20px rgba(0,0,0,0.32);
+      position:relative; overflow:hidden;
+    }
+    .logo:after{
+      content:"";
+      position:absolute; inset:-18px;
+      background: conic-gradient(from 120deg, rgba(255,255,255,0), rgba(255,255,255,0.25), rgba(255,255,255,0));
+      animation: spin 2.8s linear infinite;
+      opacity:0.65;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .title{ font-weight: 850; letter-spacing: 0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sub{ font-size:12px; opacity:0.75; }
+
+    .stats{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; font-size:13px; }
+    .pill{
+      display:flex; align-items:center; gap:6px;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,0.12);
+      background: rgba(11,18,32,0.65);
+    }
+    .dot{ width:8px; height:8px; border-radius:99px; background: rgba(255,255,255,0.35); }
+    .dot.green{ background: rgba(74,222,128,0.95); }
+    .dot.blue{ background: rgba(96,165,250,0.95); }
+    .dot.red{ background: rgba(255,107,107,0.95); }
+
+    .stage{ display:flex; align-items:center; justify-content:center; position:relative; min-height:0; }
+    canvas#game{
+      /* Fit within BOTH width and height on short mobile screens.
+         60vh leaves room for footer + touch controls without clipping gameplay. */
+      width: min(92vw, 60vh, 512px);
+      height: auto;
+      aspect-ratio: 1/1;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background:#0f1624;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.48);
+      image-rendering: pixelated;
+      touch-action:none;
+    }
+
+    .footer .hint{ font-size:12px; opacity:0.72; line-height:1.35; }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding:2px 7px;
+      border:1px solid rgba(255,255,255,0.14);
+      border-bottom-width:2px;
+      border-radius: 8px;
+      background: rgba(11,18,32,0.85);
+      display:inline-block;
+      margin: 0 2px;
+    }
+    .btns{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .btn{
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(11,18,32,0.70);
+      color:#e8eef6;
+      padding:10px 12px;
+      border-radius:14px;
+      font-weight:800;
+      letter-spacing:0.3px;
+      cursor:pointer;
+      box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+      transition: transform .08s ease, background .15s ease, border-color .15s ease, opacity .15s ease;
+    }
+    .btn:active{ transform: translateY(1px) scale(0.995); }
+    .btn.primary{
+      background: linear-gradient(135deg, rgba(74,222,128,0.24), rgba(96,165,250,0.22));
+      border-color: rgba(255,255,255,0.18);
+    }
+    .btn.danger{
+      background: linear-gradient(135deg, rgba(255,107,107,0.22), rgba(255,193,7,0.08));
+    }
+
+    /* Touch controls (mobile). Placed in its own fixed bar BELOW the footer so it won't遮挡游戏画面 */
+    #touchBar{
+      display:none;
+      gap:12px;
+      align-items:stretch;
+      justify-content:space-between;
+      padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(10,14,20,0.50);
+      backdrop-filter: blur(10px);
+      border-radius:18px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.32);
+      touch-action:none;
+      -webkit-user-select:none;
+      user-select:none;
+    }
+    @media (pointer: coarse), (hover: none){
+      #touchBar{ display:flex; }
+      /* On phones, hide desktop keyboard legend to free vertical space */
+      .footer .hint{ display:none; }
+    }
+
+    /* On touch devices, hide the PC keyboard hint to save vertical space. */
+    @media (pointer: coarse), (hover: none){
+      .footer .hint{ display:none; }
+    }
+
+    /* Make touch controls more compact on very small screens */
+    @media (max-width: 420px){
+      .pad{ grid-template-columns:48px 48px 48px; grid-template-rows:48px 48px 48px; gap:8px; }
+      .tbtn{ width:48px; height:48px; border-radius:14px; }
+      .spacer{ width:48px; height:48px; }
+      .tbtn.fire{ width:88px; height:88px; border-radius:20px; }
+      .tbtn.pause{ width:88px; height:52px; }
+      #touchBar{ padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
+    }
+    .pad{
+      display:grid;
+      grid-template-columns:56px 56px 56px;
+      grid-template-rows:56px 56px 56px;
+      gap:10px;
+      align-items:center;
+      justify-items:center;
+    }
+    .tbtn{
+      width:56px; height:56px;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(11,18,32,.72);
+      box-shadow: 0 10px 22px rgba(0,0,0,.25);
+      color:#e8eef6;
+      display:flex; align-items:center; justify-content:center;
+      font-weight:900;
+      letter-spacing:.4px;
+      touch-action:none;
+    }
+    .tbtn:active{ transform: translateY(1px) scale(0.99); }
+    .tbtn.fire{
+      width:96px; height:96px;
+      border-radius:22px;
+      background: linear-gradient(135deg, rgba(96,165,250,.22), rgba(74,222,128,.18));
+      border-color: rgba(255,255,255,.18);
+      font-size:14px;
+    }
+    .tbtn.pause{
+      width:96px; height:56px;
+      border-radius:16px;
+      font-size:13px;
+      opacity:.95;
+    }
+    .actions{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:flex-end;
+      justify-content:center;
+    }
+    .spacer{ width:56px; height:56px; opacity:0; }
+
+    /* Extra-compact layout for very small phones */
+    @media (max-width: 420px){
+      .pad{
+        grid-template-columns:48px 48px 48px;
+        grid-template-rows:48px 48px 48px;
+        gap:8px;
+      }
+      .tbtn{ width:48px; height:48px; border-radius:14px; }
+      .tbtn.fire{ width:88px; height:88px; border-radius:20px; }
+      .tbtn.pause{ width:88px; height:48px; border-radius:14px; }
+      .spacer{ width:48px; height:48px; }
+    }
+
+    /* Touch controls are shown only on touch devices (see #touchBar below). */
+
+    .start-overlay{
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(6px);
+      border-radius: 18px;
+    }
+    .start-card{
+      pointer-events:auto;
+      width: min(430px, 86%);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(11,18,32,0.72);
+      box-shadow: 0 22px 60px rgba(0,0,0,0.5);
+      padding: 16px 16px 14px;
+    }
+    .start-card h2{ margin:0 0 8px; font-size:20px; }
+    .start-card p{ margin:0 0 12px; opacity:0.82; font-size:13px; line-height:1.55; }
+    .start-row{ display:flex; gap:10px; justify-content:flex-end; align-items:center; flex-wrap:wrap; }
+    .tiny{ font-size:12px; opacity:0.68; }
+
+    @media (max-width: 560px){
+      .app{ padding:12px 12px calc(12px + env(safe-area-inset-bottom)); }
+      .topbar, .footer{ border-radius:16px; }
+    }
+
+    /* Extra compact touch layout for very small screens */
+    @media (max-width: 420px){
+      .pad{ grid-template-columns:48px 48px 48px; grid-template-rows:48px 48px 48px; gap:8px; }
+      .tbtn{ width:48px; height:48px; border-radius:14px; }
+      .tbtn.fire{ width:84px; height:84px; border-radius:20px; }
+      .tbtn.pause{ width:84px; height:48px; }
+    }
+  
+  .homeLink{
+    position:fixed; left:14px; top:14px; z-index:50;
+    font-size:12px; padding:8px 10px; border-radius:12px;
+    border:1px solid rgba(255,255,255,.14);
+    background: rgba(0,0,0,.35);
+    color:#e8f0ff; text-decoration:none;
+    backdrop-filter: blur(8px);
+  }
+  .homeLink:hover{ border-color: rgba(96,165,250,.75); }
+
+</style>
 </head>
 <body>
-  <div class="hud" id="hud">
-    <div class="hud__left">
-      <span>分数：<b id="score">0</b></span>
-      <span class="sep"></span>
-      <span>生命：<b id="lives">3</b></span>
-      <span class="sep"></span>
-      <span>关卡：<b id="level">1</b></span>
-      <span class="sep"></span>
-      <span>敌人：<b id="enemies">0</b></span>
+  <a class="homeLink" href="../../index.html" target="_top">← 返回大厅</a>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div style="min-width:0">
+          <div class="title">坦克大战（2000）</div>
+          <div class="sub">Modern FX · Keyboard / Mouse · Audio</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="pill"><span class="dot green"></span>得分 <b id="score">0</b></div>
+        <div class="pill"><span class="dot green"></span>生命 <b id="hp">4</b>/<b id="hpMax">4</b></div>
+        <div class="pill"><span class="dot blue"></span>敌人 <b id="enemies">0</b></div>
+        <div class="pill"><span class="dot red"></span>状态 <b id="status">运行中</b></div>
+      </div>
     </div>
 
-    <div class="hud__right">
-      <button class="btn" id="btnPause" type="button">暂停(P)</button>
-      <button class="btn" id="btnRestart" type="button">重开(R)</button>
-    </div>
-  </div>
+    <div class="stage">
+      <canvas id="game" width="512" height="512"></canvas>
 
-  <div class="stage" id="stage">
-    <canvas id="game" aria-label="坦克大战画布"></canvas>
-
-    <div class="overlay" id="overlay" hidden>
-      <div class="panel">
-        <div class="title" id="overlayTitle">坦克大战</div>
-        <div class="desc" id="overlayDesc">方向键 / WASD 移动，空格开火，P 暂停，R 重开。</div>
-        <div class="actions">
-          <button class="btn primary" id="btnStart" type="button">开始</button>
-          <button class="btn" id="btnResume" type="button">继续</button>
+      <div class="start-overlay" id="startOverlay">
+        <div class="start-card">
+          <h2>点击开始</h2>
+          <p>
+            为了在手机端播放音乐/音效，需要一次用户交互来解锁音频。<br/>
+            背景音乐请放到 <span class="kbd">audio/音乐.mp3</span>（可选）。
+          </p>
+          <div class="start-row">
+            <span class="tiny">提示：<span class="kbd">P</span> 暂停 / 继续</span>
+            <button class="btn primary" id="startBtn">开始游戏</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="touch" id="touch" aria-hidden="true">
-      <div class="dpad">
-        <button class="tbtn" data-k="up">▲</button>
-        <div class="dpad__mid">
-          <button class="tbtn" data-k="left">◀</button>
-          <button class="tbtn" data-k="down">▼</button>
-          <button class="tbtn" data-k="right">▶</button>
-        </div>
+    <div class="footer">
+      <div class="hint">
+        <div>桌面：<span class="kbd">方向键</span>/<span class="kbd">WASD</span> 移动，<span class="kbd">鼠标左键</span>/<span class="kbd">Space</span> 开火</div>
+        <div><span class="kbd">P</span> 暂停，<span class="kbd">R</span> 重开</div>
+      </div>
+      <div class="btns">
+        <button class="btn" id="pauseBtn" title="暂停/继续（P）">暂停</button>
+        <button class="btn" id="toggleAudioBtn" title="开启/关闭背景音乐">音乐：开</button>
+        <button class="btn danger" id="restartBtn">重开</button>
+      </div>
+    </div>
+
+    <!-- Touch controls bar (mobile). Placed BELOW the footer so it won't遮挡游戏画面 -->
+    <div id="touchBar" aria-label="Touch Controls">
+      <div class="pad" aria-label="D-Pad">
+        <div class="spacer"></div>
+        <div id="btnUp" class="tbtn" role="button" aria-label="Up">▲</div>
+        <div class="spacer"></div>
+
+        <div id="btnLeft" class="tbtn" role="button" aria-label="Left">◀</div>
+        <div class="spacer"></div>
+        <div id="btnRight" class="tbtn" role="button" aria-label="Right">▶</div>
+
+        <div class="spacer"></div>
+        <div id="btnDown" class="tbtn" role="button" aria-label="Down">▼</div>
+        <div class="spacer"></div>
       </div>
 
-      <div class="firepad">
-        <button class="tbtn tbtn--fire" data-k="fire">开火</button>
+      <div class="actions" aria-label="Actions">
+        <div id="btnFire" class="tbtn fire" role="button" aria-label="Fire">开火</div>
+        <div id="btnPause2" class="tbtn pause" role="button" aria-label="Pause">暂停</div>
       </div>
     </div>
   </div>
 
-  <script src="./game.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  const CANVAS_SIZE = 512;
+  const TILE_SIZE = 16;
+  const GRID = CANVAS_SIZE / TILE_SIZE;
+
+  // Gameplay tuning
+  const PLAYER_MAX_HP = 4;          // player must be hit >= 4 times to die
+  const VISION_RADIUS = 160;        // px, circular sight radius for both player & AI
+  const VISION_RADIUS_SQ = VISION_RADIUS * VISION_RADIUS;
+
+  const TILE = { EMPTY: 0, BRICK: 1, GRASS: 2, WATER: 3 };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function rectsIntersect(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+  function angleLerp(a, b, t) {
+    let d = (b - a + Math.PI) % (Math.PI * 2) - Math.PI;
+    return a + d * t;
+  }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  class AudioManager {
+    constructor() {
+      this.enabled = true;
+      this.ctx = null;
+      this.master = null;
+      this._unlocked = false;
+
+      this.bgm = new Audio("audio/音乐.mp3");
+      this.bgm.loop = true;
+      this.bgm.volume = 0.35;
+    }
+
+    async unlock() {
+      if (this._unlocked) return;
+      this._unlocked = true;
+
+      try {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = 0.9;
+        this.master.connect(this.ctx.destination);
+        if (this.ctx.state === "suspended") await this.ctx.resume();
+      } catch (_) {
+        this.ctx = null;
+      }
+
+      try { if (this.enabled) await this.bgm.play(); } catch (_) {}
+    }
+
+    setEnabled(on) {
+      this.enabled = on;
+      if (!on) { try { this.bgm.pause(); } catch(_){} }
+      else { this.bgm.play().catch(()=>{}); }
+    }
+
+    beep({freq=440, dur=0.08, type="square", gain=0.15, bend=0, noise=0} = {}) {
+      if (!this.enabled) return;
+      if (!this.ctx || !this.master) return;
+
+      const t0 = this.ctx.currentTime;
+      const t1 = t0 + dur;
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+      if (noise > 0) {
+        const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1)*noise;
+        const src = this.ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(g);
+        g.connect(this.master);
+        src.start(t0);
+        src.stop(t1);
+      }
+
+      const osc = this.ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (bend !== 0) osc.frequency.exponentialRampToValueAtTime(Math.max(30, freq + bend), t1);
+
+      osc.connect(g);
+      g.connect(this.master);
+      osc.start(t0);
+      osc.stop(t1);
+    }
+
+    sfxShoot(){ this.beep({freq: 920, dur: 0.055, type:"square", gain:0.12, bend:-260}); }
+    sfxHit(){ this.beep({freq: 220, dur: 0.085, type:"sawtooth", gain:0.13, bend:-110, noise:0.34}); }
+    sfxBoom(){ this.beep({freq: 150, dur: 0.18, type:"triangle", gain:0.18, bend:-70, noise:0.46}); }
+  }
+
+  class Particle {
+    constructor(x, y, vx, vy, life, size, kind) {
+      this.x=x; this.y=y;
+      this.vx=vx; this.vy=vy;
+      this.life=life; this.maxLife=life;
+      this.size=size;
+      this.kind=kind;
+      this.rot = rand(0, Math.PI*2);
+      this.vr = rand(-6, 6);
+    }
+    update(dt) {
+      this.life -= dt;
+      if (this.life <= 0) return false;
+      this.vx *= Math.pow(0.12, dt);
+      this.vy = this.vy * Math.pow(0.12, dt) + 260*dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.rot += this.vr * dt;
+      return true;
+    }
+    draw(ctx) {
+      const t = clamp(1 - this.life / this.maxLife, 0, 1);
+      const a = (1 - t);
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.rot);
+
+      if (this.kind === "debris") {
+        ctx.globalAlpha = 0.9 * a;
+        ctx.fillStyle = (t < 0.4) ? "rgba(210,120,70,1)" : "rgba(120,65,45,1)";
+        ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
+      } else if (this.kind === "spark") {
+        ctx.globalAlpha = 0.95 * a;
+        ctx.fillStyle = "rgba(250,220,90,1)";
+        ctx.fillRect(-this.size/2, -1, this.size, 2);
+      } else if (this.kind === "smoke") {
+        ctx.globalAlpha = 0.22 * a;
+        ctx.fillStyle = "rgba(200,210,230,1)";
+        ctx.beginPath();
+        ctx.arc(0, 0, this.size*(1+t*1.6), 0, Math.PI*2);
+        ctx.fill();
+      } else if (this.kind === "ring") {
+        ctx.globalAlpha = 0.22 * a;
+        ctx.strokeStyle = "rgba(255,255,255,1)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, this.size*(1+t*2.6), 0, Math.PI*2);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  class FX {
+    constructor() {
+      this.particles = [];
+      this.flash = 0;
+      this.shake = 0;
+      this.shakeX = 0;
+      this.shakeY = 0;
+    }
+    update(dt) {
+      this.particles = this.particles.filter(p => p.update(dt));
+      this.flash = Math.max(0, this.flash - dt * 2.5);
+      this.shake = Math.max(0, this.shake - dt * 2.2);
+      const s = this.shake;
+      this.shakeX = (Math.random()*2-1) * 6 * s;
+      this.shakeY = (Math.random()*2-1) * 6 * s;
+    }
+    draw(ctx) { for (const p of this.particles) p.draw(ctx); }
+
+    burstBrick(x, y) {
+      for (let i=0;i<14;i++) {
+        this.particles.push(new Particle(
+          x + rand(-5,5), y + rand(-5,5),
+          rand(-220,220), rand(-240,40),
+          rand(0.25, 0.55),
+          rand(2,3),
+          "debris"
+        ));
+      }
+      for (let i=0;i<8;i++) {
+        this.particles.push(new Particle(
+          x + rand(-3,3), y + rand(-3,3),
+          rand(-260,260), rand(-260,0),
+          rand(0.12, 0.22),
+          rand(3,6),
+          "spark"
+        ));
+      }
+      this.flash = Math.min(1, this.flash + 0.28);
+      this.shake = Math.min(1, this.shake + 0.22);
+    }
+
+    burstTank(x, y) {
+      this.particles.push(new Particle(x, y, 0, 0, 0.35, 8, "ring"));
+      for (let i=0;i<26;i++) {
+        this.particles.push(new Particle(
+          x + rand(-6,6), y + rand(-6,6),
+          rand(-320,320), rand(-320,160),
+          rand(0.22, 0.55),
+          rand(2,4),
+          (Math.random()<0.55) ? "spark" : "debris"
+        ));
+      }
+      for (let i=0;i<10;i++) {
+        this.particles.push(new Particle(
+          x + rand(-8,8), y + rand(-8,8),
+          rand(-40,40), rand(-140,-20),
+          rand(0.35, 0.8),
+          rand(3,6),
+          "smoke"
+        ));
+      }
+      this.flash = Math.min(1, this.flash + 0.55);
+      this.shake = Math.min(1, this.shake + 0.55);
+    }
+  }
+
+  class TileMap {
+    constructor(w, h) {
+      this.w=w; this.h=h;
+      this.tiles = new Uint8Array(w*h);
+      this.grassDecor = new Array(w*h);
+      this.reset();
+
+      // Pre-generated subtle star/noise field to avoid per-frame random flicker
+      this.stars = Array.from({length: 55}, () => ({
+        x: (Math.random()*CANVAS_SIZE)|0,
+        y: (Math.random()*CANVAS_SIZE)|0,
+        p: Math.random()*Math.PI*2,
+        s: 0.02 + Math.random()*0.05,
+      }));
+    }
+    idx(x,y){ return y*this.w+x; }
+    inBounds(x,y){ return x>=0&&y>=0&&x<this.w&&y<this.h; }
+    get(x,y){ if(!this.inBounds(x,y)) return TILE.BRICK; return this.tiles[this.idx(x,y)]; }
+    set(x,y,t){ if(!this.inBounds(x,y)) return; this.tiles[this.idx(x,y)] = t; }
+    isSolid(t){ return t===TILE.BRICK || t===TILE.WATER; }
+
+    reset(){
+      this.tiles.fill(TILE.EMPTY);
+      this.grassDecor.fill(null);
+
+      for (let x=0;x<this.w;x++){ this.set(x,0,TILE.BRICK); this.set(x,this.h-1,TILE.BRICK); }
+      for (let y=0;y<this.h;y++){ this.set(0,y,TILE.BRICK); this.set(this.w-1,y,TILE.BRICK); }
+
+      for (let y=4;y<this.h-4;y++){
+        const x = 15 + ((y/4)|0)%2;
+        this.set(x,y,TILE.WATER); this.set(x+1,y,TILE.WATER);
+      }
+
+      const clusters = [
+        {x:5,y:6,w:6,h:3},
+        {x:20,y:8,w:7,h:3},
+        {x:7,y:18,w:5,h:4},
+        {x:22,y:20,w:6,h:3},
+        {x:12,y:26,w:8,h:3},
+      ];
+      for (const c of clusters){
+        for (let yy=c.y;yy<c.y+c.h;yy++){
+          for (let xx=c.x;xx<c.x+c.w;xx++){
+            if ((xx+yy)%3!==0) this.set(xx,yy,TILE.BRICK);
+          }
+        }
+      }
+
+      const grass = [
+        {x:3,y:3,w:6,h:4},
+        {x:23,y:3,w:6,h:4},
+        {x:3,y:24,w:6,h:4},
+        {x:23,y:24,w:6,h:4},
+        {x:12,y:12,w:4,h:4},
+      ];
+      for (const g of grass){
+        for (let yy=g.y;yy<g.y+g.h;yy++){
+          for (let xx=g.x;xx<g.x+g.w;xx++){
+            if (this.get(xx,yy)===TILE.EMPTY) this.set(xx,yy,TILE.GRASS);
+          }
+        }
+      }
+
+      this.clearArea(1, this.h-3, 4, 2);
+      this.clearArea(this.w-5, 1, 4, 2);
+
+      for (let y=0;y<this.h;y++){
+        for (let x=0;x<this.w;x++){
+          const i = this.idx(x,y);
+          if (this.tiles[i] !== TILE.GRASS) continue;
+          const pts = [];
+          let s = (((x*73856093) ^ (y*19349663)) >>> 0);
+          const rng = () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296;
+          for (let k=0;k<7;k++){
+            pts.push({
+              x: 2 + Math.floor(rng()*(TILE_SIZE-4)),
+              y: 2 + Math.floor(rng()*(TILE_SIZE-4)),
+              r: 1 + Math.floor(rng()*2),
+            });
+          }
+          this.grassDecor[i] = pts;
+        }
+      }
+    }
+
+    clearArea(x,y,w,h){
+      for(let yy=y;yy<y+h;yy++) for(let xx=x;xx<x+w;xx++) this.set(xx,yy,TILE.EMPTY);
+    }
+
+    collidesRect(px,py,pw,ph){
+      const x0 = Math.floor(px/TILE_SIZE);
+      const y0 = Math.floor(py/TILE_SIZE);
+      const x1 = Math.floor((px+pw-1)/TILE_SIZE);
+      const y1 = Math.floor((py+ph-1)/TILE_SIZE);
+      for(let y=y0;y<=y1;y++){
+        for(let x=x0;x<=x1;x++){
+          if (this.isSolid(this.get(x,y))) return true;
+        }
+      }
+      return false;
+    }
+
+    bulletHit(px,py){
+      const tx = Math.floor(px/TILE_SIZE);
+      const ty = Math.floor(py/TILE_SIZE);
+      const t = this.get(tx,ty);
+      if (t===TILE.BRICK){
+        this.set(tx,ty,TILE.EMPTY);
+        return {hit:true, stop:true, kind:"brick", tx, ty};
+      }
+      if (t===TILE.WATER){
+        return {hit:true, stop:true, kind:"water", tx, ty};
+      }
+      return {hit:false, stop:false, kind:"none", tx, ty};
+    }
+
+    draw(ctx, tSec){
+      const g = ctx.createLinearGradient(0,0,0,CANVAS_SIZE);
+      g.addColorStop(0, "#0f1b2c");
+      g.addColorStop(1, "#0b1220");
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+
+      // subtle star field (stable positions; animated alpha)
+      ctx.fillStyle = "rgba(255,255,255,1)";
+      for (const s of this.stars){
+        const a = 0.01 + (0.5 + 0.5*Math.sin(tSec*1.5 + s.p)) * s.s;
+        ctx.globalAlpha = a;
+        ctx.fillRect(s.x, s.y, 1, 1);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.strokeStyle = "rgba(255,255,255,0.025)";
+      ctx.lineWidth = 1;
+      for (let i=0;i<=this.w;i++){
+        const x = i*TILE_SIZE + 0.5;
+        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,this.h*TILE_SIZE); ctx.stroke();
+      }
+      for (let i=0;i<=this.h;i++){
+        const y = i*TILE_SIZE + 0.5;
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(this.w*TILE_SIZE,y); ctx.stroke();
+      }
+
+      for(let y=0;y<this.h;y++){
+        for(let x=0;x<this.w;x++){
+          const tt = this.get(x,y);
+          if (tt===TILE.EMPTY || tt===TILE.GRASS) continue;
+          this.drawTile(ctx,x,y,tt,tSec);
+        }
+      }
+
+      // (Removed) moving highlight sweep bars — was visually distracting.
+
+    }
+
+    drawGrassOverlay(ctx){
+      for(let y=0;y<this.h;y++){
+        for(let x=0;x<this.w;x++){
+          if (this.get(x,y)===TILE.GRASS) this.drawTile(ctx,x,y,TILE.GRASS,0);
+        }
+      }
+    }
+
+    drawTile(ctx,x,y,t, tSec){
+      const px=x*TILE_SIZE, py=y*TILE_SIZE;
+      if (t===TILE.BRICK){
+        ctx.fillStyle = "#8c3b2f";
+        ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+
+        ctx.fillStyle = "#b4513b";
+        for (let i=0;i<4;i++){
+          ctx.fillRect(px+1, py+1+i*4, TILE_SIZE-2, 2);
+        }
+
+        ctx.fillStyle = "rgba(255,255,255,0.07)";
+        ctx.fillRect(px+1, py+1, TILE_SIZE-2, 1);
+        ctx.fillStyle = "rgba(0,0,0,0.32)";
+        ctx.fillRect(px, py+TILE_SIZE-1, TILE_SIZE, 1);
+        ctx.fillRect(px+TILE_SIZE-1, py, 1, TILE_SIZE);
+
+      } else if (t===TILE.WATER){
+        ctx.fillStyle = "#1e4b9b";
+        ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+        const w = Math.sin(tSec*4 + (x+y)*0.7) * 0.5 + 0.5;
+        ctx.fillStyle = `rgba(255,255,255,${0.08 + w*0.08})`;
+        ctx.fillRect(px+2,py+3,4,2);
+        ctx.fillRect(px+9,py+9,5,2);
+        ctx.fillRect(px+4,py+11,3,2);
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(px, py+TILE_SIZE-1, TILE_SIZE, 1);
+
+      } else if (t===TILE.GRASS){
+        ctx.fillStyle = "rgba(42, 160, 80, 0.76)";
+        ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+        ctx.fillStyle = "rgba(18, 88, 42, 0.62)";
+        const pts = this.grassDecor[this.idx(x,y)] || [];
+        for (const p of pts) ctx.fillRect(px+p.x, py+p.y, p.r, p.r);
+        ctx.globalAlpha = 0.22;
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillRect(px+1, py+1, TILE_SIZE-2, 1);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  class Bullet {
+    constructor(owner, x, y, vx, vy) {
+      this.owner = owner;
+      this.x=x; this.y=y;
+      this.vx=vx; this.vy=vy;
+      this.speed = 300;
+      this.r = 2;
+      this.alive = true;
+      this.tx = x;
+      this.ty = y;
+    }
+
+    update(dt, map, tanks, audio, fx) {
+      if (!this.alive) return;
+      this.tx = this.x; this.ty = this.y;
+      this.x += this.vx*this.speed*dt;
+      this.y += this.vy*this.speed*dt;
+
+      if (this.x<0||this.y<0||this.x>CANVAS_SIZE||this.y>CANVAS_SIZE){ this.alive=false; return; }
+
+      const hit = map.bulletHit(this.x, this.y);
+      if (hit.stop) {
+        this.alive = false;
+        audio?.sfxHit();
+        const cx = (hit.tx + 0.5) * TILE_SIZE;
+        const cy = (hit.ty + 0.5) * TILE_SIZE;
+        fx?.burstBrick(cx, cy);
+        return;
+      }
+
+      for (const t of tanks) {
+        if (!t.alive) continue;
+        if (t.faction === this.owner) continue;
+        const bx=this.x-this.r, by=this.y-this.r, bw=this.r*2, bh=this.r*2;
+        if (rectsIntersect(bx,by,bw,bh, t.x,t.y,t.w,t.h)) {
+          // Damage model: player has higher HP; enemies default to 1 HP
+          t.hp = Math.max(0, (t.hp|0) - 1);
+          t.hitFlash = 1;
+
+          this.alive = false;
+
+          if (t.hp <= 0){
+            t.alive = false;
+            audio?.sfxBoom();
+            fx?.burstTank(t.x + t.w/2, t.y + t.h/2);
+          } else {
+            audio?.sfxHit();
+          }
+          return;
+        }
+      }
+    }
+
+    draw(ctx) {
+      if (!this.alive) return;
+      ctx.globalAlpha = 0.22;
+      ctx.strokeStyle = (this.owner==="player") ? "rgba(246,224,94,1)" : "rgba(255,107,107,1)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(this.tx, this.ty);
+      ctx.lineTo(this.x, this.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = (this.owner==="player") ? "#f6e05e" : "#ff6b6b";
+      ctx.fillRect((this.x-this.r)|0, (this.y-this.r)|0, this.r*2, this.r*2);
+    }
+  }
+
+  class Tank {
+    constructor(faction, x, y, color) {
+      this.faction=faction;
+      this.x=x; this.y=y;
+      this.w=14; this.h=14;
+      this.angle=-Math.PI/2;
+      this.targetAngle=this.angle;
+      this.speed=110;
+      this.color=color;
+      this.alive=true;
+
+      // Health
+      this.maxHp = 1;
+      this.hp = this.maxHp;
+
+      this.fireCooldown=0;
+      this.fireRate=0.38;
+      this.hitFlash=0;
+    }
+
+    update(dt){
+      if (this.fireCooldown>0) this.fireCooldown -= dt;
+      this.angle = angleLerp(this.angle, this.targetAngle, 1 - Math.pow(0.001, dt));
+      this.hitFlash = Math.max(0, this.hitFlash - dt*4);
+    }
+
+    canFire(){ return this.fireCooldown<=0; }
+
+    fire(bullets, audio){
+      if (!this.canFire() || !this.alive) return;
+      this.fireCooldown = this.fireRate;
+      const cx=this.x+this.w/2, cy=this.y+this.h/2;
+      const vx=Math.cos(this.angle), vy=Math.sin(this.angle);
+      const off=10;
+      bullets.push(new Bullet(this.faction, cx+vx*off, cy+vy*off, vx, vy));
+      audio?.sfxShoot();
+    }
+
+    tryMove(dt, map, vx, vy){
+      const nx=this.x + vx*this.speed*dt;
+      if (!map.collidesRect(nx, this.y, this.w, this.h)) this.x = nx;
+      const ny=this.y + vy*this.speed*dt;
+      if (!map.collidesRect(this.x, ny, this.w, this.h)) this.y = ny;
+      this.x = clamp(this.x, 1, CANVAS_SIZE - this.w - 1);
+      this.y = clamp(this.y, 1, CANVAS_SIZE - this.h - 1);
+    }
+
+    draw(ctx){
+      if (!this.alive) return;
+      const cx=this.x+this.w/2, cy=this.y+this.h/2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(this.angle);
+
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "rgba(0,0,0,1)";
+      ctx.fillRect(-this.w/2 + 1.2, -this.h/2 + 2.0, this.w, this.h);
+      ctx.globalAlpha = 1;
+
+      const g = ctx.createLinearGradient(-this.w/2, -this.h/2, this.w/2, this.h/2);
+      g.addColorStop(0, this.color);
+      g.addColorStop(1, "rgba(0,0,0,0.2)");
+      ctx.fillStyle = g;
+      ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillRect(-this.w/2 + 1, -this.h/2 + 1, 2, this.h-2);
+      ctx.fillRect(this.w/2 - 3, -this.h/2 + 1, 2, this.h-2);
+
+      ctx.fillStyle = "rgba(255,255,255,0.16)";
+      ctx.fillRect(-3, -3, 6, 6);
+
+      ctx.fillStyle = "#0b1020";
+      ctx.fillRect(0, -1, 10, 2);
+
+      ctx.globalAlpha = 0.20;
+      ctx.fillStyle = "rgba(255,255,255,1)";
+      ctx.fillRect(-this.w/2 + 1, -this.h/2 + 1, this.w-2, 1);
+      ctx.globalAlpha = 1;
+
+      ctx.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx.strokeRect(-this.w/2 + 0.5, -this.h/2 + 0.5, this.w, this.h);
+
+      if (this.hitFlash > 0) {
+        ctx.globalAlpha = 0.35 * this.hitFlash;
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.restore();
+    }
+  }
+
+  class Player extends Tank {
+    constructor(x,y){
+      super("player", x,y, "#4ade80");
+      this.speed=135;
+      this.fireRate=0.31;
+      this.maxHp = PLAYER_MAX_HP;
+      this.hp = this.maxHp;
+    }
+    handleInput(dt, map, input, bullets, audio){
+      if (!this.alive) return;
+      let vx=input.axisX, vy=input.axisY;
+      const mag=Math.hypot(vx,vy);
+      if (mag>0.001){
+        vx/=mag; vy/=mag;
+        this.targetAngle = Math.atan2(vy, vx);
+        this.tryMove(dt, map, vx, vy);
+      }
+      if (input.firePressed) this.fire(bullets, audio);
+    }
+  }
+
+  class Enemy extends Tank {
+    constructor(x,y){
+      super("enemy", x,y, "#60a5fa");
+      this.speed=100;
+      this.fireRate=0.56;
+      this.aiTimer=0;
+      this.changeInterval=0.55+Math.random()*0.9;
+      this.moveAngle=Math.PI/2;
+    }
+    updateAI(dt, map, player, bullets, audio){
+      if (!this.alive) return;
+      this.update(dt);
+
+      // AI sight check (cannot 'see' player outside the vision radius)
+      const dx0 = player.x - this.x;
+      const dy0 = player.y - this.y;
+      const canSee = (dx0*dx0 + dy0*dy0) <= VISION_RADIUS_SQ;
+
+      this.aiTimer += dt;
+      if (this.aiTimer > this.changeInterval){
+        this.aiTimer=0;
+        this.changeInterval=0.55+Math.random()*0.9;
+        if (Math.random()<0.62 && canSee){
+          const dx=player.x-this.x, dy=player.y-this.y;
+          this.moveAngle = Math.atan2(dy, dx) + rand(-0.35, 0.35);
+        } else {
+          this.moveAngle = Math.random()*Math.PI*2;
+        }
+      }
+
+      const vx=Math.cos(this.moveAngle), vy=Math.sin(this.moveAngle);
+      const ox=this.x, oy=this.y;
+      this.tryMove(dt, map, vx, vy);
+      const moved=(Math.abs(this.x-ox)+Math.abs(this.y-oy))>0.01;
+      if (!moved) this.moveAngle += (Math.random()<0.5?1:-1) * (Math.PI/2);
+
+      this.targetAngle = this.moveAngle;
+
+      const dx=player.x-this.x, dy=player.y-this.y;
+      const toP = Math.atan2(dy, dx);
+      const diff = Math.abs(((toP - this.angle + Math.PI)%(Math.PI*2))-Math.PI);
+      let p=0.007;
+      if (diff<0.35) p=0.03;
+
+      if (canSee && this.canFire() && Math.random() < p*(dt*60)){
+        this.targetAngle = toP;
+        this.angle = angleLerp(this.angle, this.targetAngle, 0.8);
+        this.fire(bullets, audio);
+      }
+    }
+  }
+
+  class Input {
+    constructor(){
+      this.axisX = 0;
+      this.axisY = 0;
+      this._k = {left:false,right:false,up:false,down:false};
+      this.firePressed = false;
+      this._fireDown = false;
+      this.restartPressed = false;
+
+      window.addEventListener("keydown", (e)=>this.onKey(e,true), {passive:false});
+      window.addEventListener("keyup", (e)=>this.onKey(e,false), {passive:false});
+      // Avoid stuck keys when tab loses focus
+      window.addEventListener("blur", ()=>{
+        this._k = {left:false,right:false,up:false,down:false};
+        this._fireDown = false;
+        this.firePressed = false;
+      });
+    }
+    onKey(e,down){
+      const k=e.code;
+      if ([
+        "ArrowLeft","ArrowRight","ArrowUp","ArrowDown",
+        "KeyW","KeyA","KeyS","KeyD",
+        "Space","KeyR"
+      ].includes(k)) e.preventDefault();
+
+      // Movement: Arrow keys (primary) + WASD (secondary)
+      if (k==="ArrowLeft" || k==="KeyA") this._k.left=down;
+      if (k==="ArrowRight" || k==="KeyD") this._k.right=down;
+      if (k==="ArrowUp" || k==="KeyW") this._k.up=down;
+      if (k==="ArrowDown" || k==="KeyS") this._k.down=down;
+
+      // Fire: Space as backup (mouse left click handled on canvas)
+      if (k==="Space"){
+        if (down && !this._fireDown) this.firePressed=true;
+        this._fireDown=down;
+      }
+
+      if (k==="KeyR"){ if (down) this.restartPressed=true; }
+    }
+    setFirePressed(){ this.firePressed=true; }
+    setFireDown(down){
+      if (down && !this._fireDown) this.firePressed = true;
+      this._fireDown = !!down;
+    }
+    setDir(dir, down){
+      const v = !!down;
+      if (dir==="left") this._k.left = v;
+      else if (dir==="right") this._k.right = v;
+      else if (dir==="up") this._k.up = v;
+      else if (dir==="down") this._k.down = v;
+    }
+    update(_dt){
+      let ax=0, ay=0;
+      if (this._k.left) ax-=1;
+      if (this._k.right) ax+=1;
+      if (this._k.up) ay-=1;
+      if (this._k.down) ay+=1;
+      const mag = Math.hypot(ax,ay);
+      if (mag>1){ ax/=mag; ay/=mag; }
+      this.axisX=ax; this.axisY=ay;
+    }
+    endFrame(){ this.firePressed=false; this.restartPressed=false; }
+  }
+
+  class Game {
+    constructor(canvas){
+      this.canvas=canvas;
+      this.ctx=canvas.getContext("2d");
+      this.ctx.imageSmoothingEnabled=false;
+
+      
+      // Cache expensive gradients/patterns (perf + avoid GPU flicker on some drivers)
+      this.vignette = this.ctx.createRadialGradient(CANVAS_SIZE/2, CANVAS_SIZE/2, 90, CANVAS_SIZE/2, CANVAS_SIZE/2, 380);
+      this.vignette.addColorStop(0, "rgba(0,0,0,0)");
+      this.vignette.addColorStop(1, "rgba(0,0,0,0.32)");
+      // 移除扫描线效果（会在部分显示器/缩放下产生一条明显的高亮横线）
+      this.scanAlpha = 0;
+      this.map = new TileMap(GRID, GRID);
+      this.input = new Input();
+
+      this.paused = false;
+      window.addEventListener("keydown", (e)=>{
+        if (e.code==="KeyP" || e.code==="Escape"){
+          e.preventDefault();
+          this.togglePause();
+        }
+      }, {passive:false});
+
+      // PC controls: mouse left-click fires (avoid touch to not interfere with mobile)
+      this.canvas.addEventListener("pointerdown", (e)=>{
+        if (e.pointerType==="mouse" && e.button===0) this.input.setFirePressed();
+      }, {passive:true});
+      this.canvas.addEventListener("contextmenu", (e)=>e.preventDefault());
+      this.audio = new AudioManager();
+      this.fx = new FX();
+
+      this.scoreEl = document.getElementById("score");
+      this.enemiesEl = document.getElementById("enemies");
+      this.statusEl = document.getElementById("status");
+      this.hpEl = document.getElementById("hp");
+      this.hpMaxEl = document.getElementById("hpMax");
+
+      this.tSec = 0;
+      this.reset();
+
+      this.lastTs = performance.now();
+      requestAnimationFrame((t)=>this.loop(t));
+    }
+
+    reset(){
+      this.map.reset();
+      const px = 1*TILE_SIZE + 1;
+      const py = (GRID-3)*TILE_SIZE + 1;
+      this.player = new Player(px, py);
+      this.bullets = [];
+      this.enemies = [];
+      this.spawnTimer = 0;
+      this.spawnInterval = 1.35;
+      this.maxEnemies = 4;
+      this.score=0;
+      this.gameOver=false;
+      this.paused=false;
+      this.updateHUD();
+      if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
+    }
+
+    togglePause(){
+      if (this.gameOver) return;
+      this.paused = !this.paused;
+      // Clear one-frame inputs so恢复时不会误触
+      this.input.firePressed = false;
+      this.input.restartPressed = false;
+      this.updateHUD();
+      if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
+    }
+
+    updateHUD(){
+      this.scoreEl.textContent = String(this.score);
+      this.enemiesEl.textContent = String(this.enemies.filter(e=>e.alive).length);
+      this.statusEl.textContent = this.gameOver ? "失败" : (this.paused ? "暂停" : "运行中");
+      if (this.player){
+        this.hpEl.textContent = String(Math.max(0, this.player.hp|0));
+        this.hpMaxEl.textContent = String(this.player.maxHp|0);
+      }
+    }
+
+    spawnEnemy(){
+      const ex = (GRID-3)*TILE_SIZE + 1;
+      const ey = 1*TILE_SIZE + 1;
+      const e = new Enemy(ex, ey);
+      e.angle = Math.PI/2;
+      e.targetAngle = e.angle;
+      this.enemies.push(e);
+    }
+
+    loop(ts){
+      const dt = clamp((ts - this.lastTs)/1000, 0, 0.05);
+      this.lastTs = ts;
+      if (this.input.restartPressed) {
+        this.paused = false;
+        this.reset();
+      }
+      if (!this.paused){
+        this.tSec += dt;
+        this.update(dt);
+      }
+      this.render();
+      this.input.endFrame();
+      requestAnimationFrame((t)=>this.loop(t));
+    }
+
+    update(dt){
+      this.input.update(dt);
+      this.fx.update(dt);
+
+      if (this.input.restartPressed) { this.reset(); return; }
+      if (this.gameOver) return;
+
+      this.spawnTimer += dt;
+      const alive = this.enemies.filter(e=>e.alive);
+      if (this.spawnTimer >= this.spawnInterval && alive.length < this.maxEnemies){
+        this.spawnTimer = 0;
+        this.spawnEnemy();
+      }
+
+      this.player.update(dt);
+      this.player.handleInput(dt, this.map, this.input, this.bullets, this.audio);
+
+      for (const e of this.enemies) e.updateAI(dt, this.map, this.player, this.bullets, this.audio);
+
+      const tanks = [this.player, ...this.enemies];
+      for (const b of this.bullets) b.update(dt, this.map, tanks, this.audio, this.fx);
+      this.bullets = this.bullets.filter(b=>b.alive);
+
+      for (const e of this.enemies){
+        if (!e._counted && !e.alive){
+          e._counted = true;
+          this.score += 120;
+        }
+      }
+      this.enemies = this.enemies.filter(e => e.alive || (e._counted && Math.random() < 0.997));
+
+      if (!this.player.alive){
+        this.gameOver = true;
+        this.fx.burstTank(this.player.x + this.player.w/2, this.player.y + this.player.h/2);
+      }
+
+      this.updateHUD();
+    }
+
+    render(){
+      const ctx=this.ctx;
+      ctx.save();
+      ctx.translate(this.fx.shakeX, this.fx.shakeY);
+
+      this.map.draw(ctx, this.tSec);
+
+      const pcx = this.player.x + this.player.w/2;
+      const pcy = this.player.y + this.player.h/2;
+
+      this.player.draw(ctx);
+      for (const e of this.enemies){
+        if (!e.alive) continue;
+        const ecx = e.x + e.w/2;
+        const ecy = e.y + e.h/2;
+        const dx = ecx - pcx;
+        const dy = ecy - pcy;
+        if (dx*dx + dy*dy <= VISION_RADIUS_SQ) e.draw(ctx);
+      }
+      for (const b of this.bullets) b.draw(ctx);
+
+      // Vision circle (helps players feel the sight range)
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "rgba(255,255,255,0.16)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(pcx, pcy, VISION_RADIUS, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+
+      this.map.drawGrassOverlay(ctx);
+      this.fx.draw(ctx);
+
+      ctx.fillStyle = this.vignette;
+      ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+
+      // (已移除) 扫描线效果
+
+      if (this.fx.flash > 0) {
+        ctx.globalAlpha = 0.28 * this.fx.flash;
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.globalAlpha = 1;
+      }
+
+      if (this.gameOver){
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "900 30px system-ui, sans-serif";
+        ctx.textAlign="center";
+        ctx.fillText("游戏失败", CANVAS_SIZE/2, CANVAS_SIZE/2 - 10);
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillText("按 R 或 点击重开", CANVAS_SIZE/2, CANVAS_SIZE/2 + 22);
+      }
+
+      if (!this.gameOver && this.paused){
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.font = "900 22px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("已暂停", CANVAS_SIZE/2, CANVAS_SIZE/2 - 6);
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.78)";
+        ctx.fillText("按 P / Esc 继续", CANVAS_SIZE/2, CANVAS_SIZE/2 + 18);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  const canvas = document.getElementById("game");
+  const game = new Game(canvas);
+
+  // Mobile touch controls (D-pad + fire + pause). Shown only on touch devices.
+  (function setupTouchControls(){
+    const isTouch = (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) || ("ontouchstart" in window);
+    const bar = document.getElementById("touchBar");
+    if (!bar || !isTouch) return;
+
+    const bindHold = (el, onDown, onUp)=>{
+      if (!el) return;
+
+      let activePointerId = null;
+      let activeTouch = false;
+
+      const down = (e)=>{
+        if (e && e.pointerType === "mouse") return;
+        try{ e && e.preventDefault(); }catch{}
+        if (activePointerId !== null || activeTouch) return;
+
+        if (e && typeof e.pointerId === "number"){
+          activePointerId = e.pointerId;
+          try{ el.setPointerCapture(activePointerId); }catch(_){ }
+        }else{
+          activeTouch = true;
+        }
+        onDown();
+      };
+
+      const up = (e)=>{
+        try{ e && e.preventDefault(); }catch{}
+        if (activePointerId !== null){
+          if (e && typeof e.pointerId === "number" && e.pointerId !== activePointerId) return;
+          activePointerId = null;
+          onUp();
+          return;
+        }
+        if (activeTouch){
+          activeTouch = false;
+          onUp();
+        }
+      };
+
+      if (window.PointerEvent){
+        el.addEventListener("pointerdown", down, {passive:false});
+        el.addEventListener("pointerup", up, {passive:false});
+        el.addEventListener("pointercancel", up, {passive:false});
+        el.addEventListener("lostpointercapture", ()=>up(), {passive:true});
+      }
+
+      el.addEventListener("touchstart", (e)=>down(e), {passive:false});
+      el.addEventListener("touchend", (e)=>up(e), {passive:false});
+      el.addEventListener("touchcancel", (e)=>up(e), {passive:false});
+    };
+
+    bindHold(document.getElementById("btnUp"),   ()=>game.input.setDir("up", true),    ()=>game.input.setDir("up", false));
+    bindHold(document.getElementById("btnDown"), ()=>game.input.setDir("down", true),  ()=>game.input.setDir("down", false));
+    bindHold(document.getElementById("btnLeft"), ()=>game.input.setDir("left", true),  ()=>game.input.setDir("left", false));
+    bindHold(document.getElementById("btnRight"),()=>game.input.setDir("right", true), ()=>game.input.setDir("right", false));
+    bindHold(document.getElementById("btnFire"), ()=>game.input.setFireDown(true),      ()=>game.input.setFireDown(false));
+
+    const pause2 = document.getElementById("btnPause2");
+    if (pause2){
+      pause2.addEventListener("pointerdown", (e)=>{
+        if (e.pointerType === "mouse") return;
+        e.preventDefault();
+        game.togglePause();
+      }, {passive:false});
+    }
+  })();
+
+  const overlay = document.getElementById("startOverlay");
+  const startBtn = document.getElementById("startBtn");
+  const restartBtn = document.getElementById("restartBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const toggleAudioBtn = document.getElementById("toggleAudioBtn");
+
+  async function start(){
+    overlay.style.display = "none";
+    await game.audio.unlock();
+  }
+  startBtn.addEventListener("click", start);
+  canvas.addEventListener("pointerdown", () => { if (overlay.style.display !== "none") start(); }, {passive:true});
+  restartBtn.addEventListener("click", () => game.reset());
+
+  game.onPauseChange = (paused)=>{
+    pauseBtn.textContent = paused ? "继续" : "暂停";
+  };
+  pauseBtn.addEventListener("click", ()=>game.togglePause());
+
+  let audioOn = true;
+  toggleAudioBtn.addEventListener("click", async ()=>{
+    audioOn = !audioOn;
+    game.audio.setEnabled(audioOn);
+    toggleAudioBtn.textContent = audioOn ? "音乐：开" : "音乐：关";
+    if (audioOn) await game.audio.unlock();
+  });
+
+  // Touch controls are available on mobile via #touchBar.
+
+})();
+</script>
 </body>
 </html>
