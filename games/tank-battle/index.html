@@ -447,6 +447,15 @@ const CANVAS_SIZE = 512;
       this.bgm = new Audio("audio/音乐.mp3");
       this.bgm.loop = true;
       this.bgm.volume = 0.35;
+
+      // Killstreak voice callouts (user-provided mp3s in /audio)
+      // Files expected: 一杀.mp3, 双杀.mp3, 三杀.mp3, 四杀.mp3, 五杀.mp3
+      this.killCallouts = ["一杀.mp3","双杀.mp3","三杀.mp3","四杀.mp3","五杀.mp3"].map((fn)=>{
+        const a = new Audio(`audio/${fn}`);
+        a.preload = "auto";
+        a.volume = 0.95;
+        return a;
+      });
     }
 
     async unlock() {
@@ -478,6 +487,19 @@ const CANVAS_SIZE = 512;
     setSfxEnabled(on) {
       this.sfxEnabled = !!on;
     }
+
+    playKillCallout(n){
+      if (!this.sfxEnabled) return;
+      const idx = Math.max(1, Math.min(5, n|0)) - 1;
+      const a = this.killCallouts && this.killCallouts[idx];
+      if (!a) return;
+      try {
+        a.pause();
+        a.currentTime = 0;
+        a.play().catch(()=>{});
+      } catch(_){ }
+    }
+
 
     // --- SFX synth ---
     _ensure() {
@@ -1331,6 +1353,10 @@ const CANVAS_SIZE = 512;
       this.aimLockInterval = 2.0;
       this.aimLockTimer = 999;
       this.aimTarget = null;
+      // Killstreak (10s window)
+      this.killStreak = 0;
+      this.lastKillAt = -1e9;
+      this.killWindow = 10.0;
       this.updateHUD();
       if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
     }
@@ -1345,7 +1371,16 @@ const CANVAS_SIZE = 512;
       if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
     }
 
-    updateHUD(){
+    onEnemyKilled(){
+      // 10s combo window: reset to 1 if timeout; otherwise increment (cap 5)
+      const now = this.tSec;
+      if (now - this.lastKillAt <= this.killWindow) this.killStreak = Math.min(5, this.killStreak + 1);
+      else this.killStreak = 1;
+      this.lastKillAt = now;
+      if (this.audio) this.audio.playKillCallout(this.killStreak);
+    }
+
+updateHUD(){
       this.scoreEl.textContent = String(this.score);
       this.enemiesEl.textContent = String(this.enemies.filter(e=>e.alive).length);
       this.statusEl.textContent = this.gameOver ? "失败" : (this.paused ? "暂停" : "运行中");
@@ -1458,6 +1493,7 @@ const CANVAS_SIZE = 512;
         if (!e._counted && !e.alive){
           e._counted = true;
           this.score += 120;
+          this.onEnemyKilled();
         }
       }
       this.enemies = this.enemies.filter(e => e.alive || (e._counted && Math.random() < 0.997));
