@@ -1364,6 +1364,56 @@ const CANVAS_SIZE = 512;
       this.enemies.push(e);
     }
 
+
+    updateAimAssist(dt){
+      // Auto-lock the nearest visible enemy inside the vision circle.
+      // Re-lock every `aimLockInterval` seconds (won't constantly switch targets).
+      this.aimLockTimer += dt;
+      if (this.aimLockTimer < this.aimLockInterval) return;
+      this.aimLockTimer = 0;
+
+      const pcx = this.player.x + this.player.w/2;
+      const pcy = this.player.y + this.player.h/2;
+
+      let best = null;
+      let bestD2 = Infinity;
+
+      for (const e of this.enemies){
+        if (!e.alive) continue;
+        const ecx = e.x + e.w/2;
+        const ecy = e.y + e.h/2;
+        const dx = ecx - pcx;
+        const dy = ecy - pcy;
+        const d2 = dx*dx + dy*dy;
+        if (d2 > VISION_RADIUS_SQ) continue;
+        if (!this._lineOfSight(pcx, pcy, ecx, ecy)) continue;
+        if (d2 < bestD2){
+          bestD2 = d2;
+          best = e;
+        }
+      }
+
+      this.aimTarget = best;
+    }
+
+    _lineOfSight(ax, ay, bx, by){
+      // Sample along the segment and check solid tiles (brick/water).
+      // TileMap.get() returns BRICK for out-of-bounds, so this also prevents locking through edges.
+      const dx = bx - ax;
+      const dy = by - ay;
+      const dist = Math.hypot(dx, dy);
+      const steps = Math.max(1, Math.ceil(dist / (TILE_SIZE/3)));
+      for (let i=1; i<steps; i++){
+        const t = i / steps;
+        const x = ax + dx * t;
+        const y = ay + dy * t;
+        const tx = Math.floor(x / TILE_SIZE);
+        const ty = Math.floor(y / TILE_SIZE);
+        if (this.map.isSolid(this.map.get(tx, ty))) return false;
+      }
+      return true;
+    }
+
     loop(ts){
       const dt = clamp((ts - this.lastTs)/1000, 0, 0.05);
       this.lastTs = ts;
@@ -1439,6 +1489,36 @@ const CANVAS_SIZE = 512;
         const dy = ecy - pcy;
         if (dx*dx + dy*dy <= VISION_RADIUS_SQ) e.draw(ctx);
       }
+
+      // Aim-assist reticle: show where the auto-lock is (within vision range)
+      if (this.aimTarget && this.aimTarget.alive){
+        const ecx = this.aimTarget.x + this.aimTarget.w/2;
+        const ecy = this.aimTarget.y + this.aimTarget.h/2;
+        const dx = ecx - pcx;
+        const dy = ecy - pcy;
+        if (dx*dx + dy*dy <= VISION_RADIUS_SQ){
+          ctx.save();
+          ctx.globalAlpha = 0.95;
+          // Outer ring
+          ctx.strokeStyle = "rgba(255,255,255,0.82)";
+          ctx.lineWidth = 2;
+          const r = 7;
+          ctx.beginPath();
+          ctx.arc(ecx, ecy, r, 0, Math.PI*2);
+          ctx.stroke();
+          // Cross ticks
+          ctx.strokeStyle = "rgba(255,90,90,0.95)";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(ecx - r - 4, ecy); ctx.lineTo(ecx - r + 1, ecy);
+          ctx.moveTo(ecx + r - 1, ecy); ctx.lineTo(ecx + r + 4, ecy);
+          ctx.moveTo(ecx, ecy - r - 4); ctx.lineTo(ecx, ecy - r + 1);
+          ctx.moveTo(ecx, ecy + r - 1); ctx.lineTo(ecx, ecy + r + 4);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       for (const b of this.bullets) b.draw(ctx);
 
       // Vision circle (helps players feel the sight range)
