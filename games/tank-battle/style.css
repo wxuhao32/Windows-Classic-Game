@@ -78,8 +78,8 @@ html, body {
   z-index: 15;
   display:none;
 }
-.dpad, .firepad{ position: absolute; bottom: 18px; pointer-events:auto; }
-.dpad{ left: 14px; }
+.joy, .firepad{ position: absolute; bottom: 18px; pointer-events:auto; }
+.joy{ left: 14px; }
 .firepad{ right: 14px; }
 
 .tbtn{
@@ -94,8 +94,29 @@ html, body {
   touch-action: none;
 }
 .tbtn--fire{ width: 84px; height: 84px; border-radius: 22px; font-weight: 700; }
-.dpad > .tbtn{ display:block; margin: 0 auto 8px; }
-.dpad__mid{ display:flex; gap: 10px; align-items:center; justify-content:center; }
+
+
+.joy__base{
+  width: 132px;
+  height: 132px;
+  border-radius: 66px;
+  border: 1px solid rgba(255,255,255,0.20);
+  background: rgba(255,255,255,0.08);
+  position: relative;
+  touch-action: none;
+}
+.joy__stick{
+  width: 62px;
+  height: 62px;
+  border-radius: 31px;
+  border: 1px solid rgba(255,255,255,0.26);
+  background: rgba(255,255,255,0.14);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  will-change: transform;
+}
 
 @media (pointer: coarse) {
   .touch{ display:block; }

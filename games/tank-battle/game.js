@@ -62,6 +62,84 @@
     KeyR: 'restart',
   };
 
+
+  // ====== Audio (SFX/VO) ======
+  // 用户会自行在 ./audio/ 目录放入：哎哟.mp3、对局.mp3
+  const AudioSys = (() => {
+    const safeAudio = (src, vol=1) => {
+      const a = new Audio(src);
+      a.preload = 'auto';
+      a.volume = vol;
+      return a;
+    };
+
+    const sys = {
+      enabled: true,
+      unlocked: false,
+      lastOuchMs: 0,
+      ouch: safeAudio('./audio/哎哟.mp3', 0.95),
+      match: safeAudio('./audio/对局.mp3', 0.95),
+      unlock(){
+        if(this.unlocked) return;
+        this.unlocked = true;
+        const warm = (a) => {
+          try{
+            a.muted = true;
+            const p = a.play();
+            if(p && p.then){
+              p.then(()=>{ a.pause(); a.currentTime = 0; a.muted = false; })
+               .catch(()=>{ a.muted = false; });
+            } else {
+              a.pause(); a.currentTime = 0; a.muted = false;
+            }
+          }catch(_){}
+        };
+        warm(this.ouch);
+        warm(this.match);
+      },
+      _play(a){
+        if(!this.enabled) return;
+        if(!a) return;
+        try{
+          a.pause();
+          a.currentTime = 0;
+          a.play().catch(()=>{});
+        }catch(_){}
+      },
+      playMatchStart(){
+        this._play(this.match);
+      },
+      playOuch(){
+        const t = now();
+        if(t - this.lastOuchMs < 300) return; // 300ms 冷却
+        this.lastOuchMs = t;
+        this._play(this.ouch);
+      }
+    };
+    return sys;
+  })();
+
+  // ====== Micro FX (shake + hit ring) ======
+  const fx = {
+    shakePx: 0, // screen-space pixels
+    rings: [],
+    kickShake(px=2){
+      this.shakePx = Math.max(this.shakePx, px);
+    },
+    addRing(x,y){
+      this.rings.push({x,y, t:0});
+    },
+    update(dtMs){
+      // shake decay ~80-120ms
+      this.shakePx *= Math.exp(-dtMs/95);
+      if(this.shakePx < 0.05) this.shakePx = 0;
+      for(const r of this.rings) r.t += dtMs;
+      for(let i=this.rings.length-1;i>=0;i--){
+        if(this.rings[i].t >= 100) this.rings.splice(i,1); // 0.1s
+      }
+    }
+  };
+
   // ====== State ======
   let dpr = 1;
   function resizeCanvas(){
@@ -73,7 +151,8 @@
   window.addEventListener('resize', resizeCanvas);
 
   const input = {
-    up:false, down:false, left:false, right:false, fire:false
+    up:false, down:false, left:false, right:false, fire:false,
+    joyActive:false, joyAx:0, joyAy:0, joyMag:0, joyAng:0
   };
 
   let running = false;
@@ -86,6 +165,11 @@
     lives: 3,
     enemiesRemaining: 0,
     baseAlive: true,
+
+    // boss victory mode
+    matchTimeMs: 0,
+    bossSpawned: false,
+    bossKilled: false,
   };
 
   // ====== World / Level ======
@@ -196,21 +280,31 @@
   const bullets = [];
   const explosions = [];
 
-  function makeTank({x,y, dir='up', isPlayer=false}){
+  function makeTank({x,y, dir='up', isPlayer=false, isBoss=false}){
+    const a = DIRS[dir]?.a ?? (-Math.PI/2);
     return {
       x, y, w: 14, h: 14,
       dir,
-      speed: isPlayer ? 70 : (55 + Math.min(20, state.level*3)),
+      // continuous movement state (for 360° joystick)
+      vx: 0, vy: 0,
+      angle: a,
+      aimAngle: a,
+      speed: isPlayer ? 70 : (isBoss ? 62 : (55 + Math.min(20, state.level*3))),
+      bulletSpeedMul: isBoss ? 1.15 : 1.0,
       fireCD: 0,
       alive: true,
-      hp: isPlayer ? 1 : 1,
+      hp: isBoss ? 5 : 1,
+      maxHp: isBoss ? 5 : 1,
+      hitFlashMs: 0, // player hit white-flash (1~2 frames)
       isPlayer,
+      isBoss,
       ai: isPlayer ? null : {
         turnCD: 0,
-        shootBias: 0.5 + Math.random()*0.4,
+        shootBias: isBoss ? 0.78 : (0.5 + Math.random()*0.4),
       }
     };
   }
+
 
   function spawnPlayer(){
     const x = Math.floor(WORLD_W/2) - 7;
@@ -230,23 +324,44 @@
     tanks.push(e);
     return e;
   }
+  function spawnBoss(){
+    // Spawn at enemy side (top area)
+    const x = Math.floor(WORLD_W/2) - 7;
+    const y = 2*TILE;
+    const boss = makeTank({x,y,dir:'down',isPlayer:false,isBoss:true});
+    boss.fireCD = 220; // a bit more aggressive, but main difference is bullet speed
+    boss.ai.turnCD = 380;
+    tanks.push(boss);
+    return boss;
+  }
+
+
 
   function makeBullet(owner){
-    const d = DIRS[owner.dir] || DIRS.up;
     const cx = owner.x + owner.w/2;
     const cy = owner.y + owner.h/2;
-    const speed = 220;
+
+    // 360° bullet direction (player uses aimAngle; enemies use 4-dir)
+    let ang = owner.aimAngle;
+    if(typeof ang !== 'number'){
+      ang = DIRS[owner.dir]?.a ?? (-Math.PI/2);
+    }
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+
+    const speed = 220 * (owner.bulletSpeedMul || 1);
     const b = {
-      x: cx + d.x*10,
-      y: cy + d.y*10,
-      vx: d.x*speed,
-      vy: d.y*speed,
+      x: cx + dx*10,
+      y: cy + dy*10,
+      vx: dx*speed,
+      vy: dy*speed,
       r: 2.3,
       ownerIsPlayer: owner.isPlayer,
       alive: true
     };
     bullets.push(b);
   }
+
 
   function addExplosion(x,y){
     explosions.push({x,y, t:0, alive:true});
@@ -285,7 +400,12 @@
   function killTank(t){
     t.alive = false;
     addExplosion(t.x + t.w/2, t.y + t.h/2);
+
+    if(t.isBoss){
+      state.bossKilled = true;
+    }
   }
+
 
   // ====== Game Flow ======
   let player = null;
@@ -314,6 +434,11 @@
     state.level = 1;
     state.score = 0;
     state.lives = 3;
+
+    state.matchTimeMs = 0;
+    state.bossSpawned = false;
+    state.bossKilled = false;
+
     resetLevel();
     syncHUD();
   }
@@ -336,7 +461,9 @@
     elScore.textContent = String(state.score);
     elLives.textContent = String(state.lives);
     elLevel.textContent = String(state.level);
-    elEnemies.textContent = String(state.enemiesRemaining);
+    const boss = tanks.find(t => t.alive && t.isBoss);
+    if(boss) elEnemies.textContent = `Boss ${boss.hp}/${boss.maxHp}`;
+    else elEnemies.textContent = String(tanks.filter(t => t.alive && !t.isPlayer && !t.isBoss).length);
   }
 
   function showOverlay(title, desc, {showStart=true, showResume=true}={}){
@@ -383,10 +510,90 @@
   }
   bindTouchButtons();
 
+  // 360° virtual joystick (mobile)
+  const joyBase = document.getElementById('joyBase');
+  const joyStick = document.getElementById('joyStick');
+  const joy = {
+    active:false,
+    pointerId:null,
+    cx:0, cy:0,
+    radius: 56,
+    dead: 7,
+  };
+
+  function joyReset(){
+    input.joyActive = false;
+    input.joyAx = 0; input.joyAy = 0;
+    input.joyMag = 0; input.joyAng = 0;
+    if(joyStick) joyStick.style.transform = 'translate(-50%, -50%)';
+  }
+
+  if(joyBase){
+    const updateJoy = (px,py)=>{
+      const dx = px - joy.cx;
+      const dy = py - joy.cy;
+      const dist = Math.hypot(dx,dy);
+      const cap = joy.radius;
+      const cl = dist > cap ? cap/dist : 1;
+      const sx = dx*cl;
+      const sy = dy*cl;
+
+      if(joyStick) joyStick.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
+
+      const d2 = Math.hypot(sx,sy);
+      if(d2 <= joy.dead){
+        input.joyActive = false;
+        input.joyAx = 0; input.joyAy = 0;
+        input.joyMag = 0;
+        return;
+      }
+      const mag = (d2 - joy.dead) / (cap - joy.dead);
+      const ang = Math.atan2(sy, sx);
+      input.joyActive = true;
+      input.joyMag = clamp(mag, 0, 1);
+      input.joyAng = ang;
+      input.joyAx = Math.cos(ang) * input.joyMag;
+      input.joyAy = Math.sin(ang) * input.joyMag;
+    };
+
+    joyBase.addEventListener('pointerdown', (ev)=>{
+      ev.preventDefault();
+      joy.active = true;
+      joy.pointerId = ev.pointerId;
+      const r = joyBase.getBoundingClientRect();
+      joy.cx = r.left + r.width/2;
+      joy.cy = r.top + r.height/2;
+      joyBase.setPointerCapture(ev.pointerId);
+      updateJoy(ev.clientX, ev.clientY);
+    }, { passive:false });
+
+    joyBase.addEventListener('pointermove', (ev)=>{
+      if(!joy.active || ev.pointerId !== joy.pointerId) return;
+      ev.preventDefault();
+      updateJoy(ev.clientX, ev.clientY);
+    }, { passive:false });
+
+    const end = (ev)=>{
+      if(ev.pointerId !== joy.pointerId) return;
+      joy.active = false;
+      joy.pointerId = null;
+      joyReset();
+    };
+    joyBase.addEventListener('pointerup', end, { passive:false });
+    joyBase.addEventListener('pointercancel', end, { passive:false });
+    joyBase.addEventListener('lostpointercapture', ()=>joyReset(), { passive:true });
+
+    // in case touch leaves the area
+    window.addEventListener('blur', ()=>joyReset(), { passive:true });
+  }
+
+
   // Buttons
   btnPause.addEventListener('click', ()=>togglePause());
   btnRestart.addEventListener('click', ()=>restart());
   btnStart.addEventListener('click', ()=>{
+    AudioSys.unlock();
+    AudioSys.playMatchStart();
     hideOverlay();
     paused = false;
     if(!running) start();
@@ -408,6 +615,8 @@
   }
 
   function restart(){
+    AudioSys.unlock();
+    AudioSys.playMatchStart();
     resetAll();
     hideOverlay();
     paused = false;
@@ -448,12 +657,82 @@
   function updatePlayer(dtMs){
     if(!player || !player.alive) return;
 
-    const want = (k) => input[k];
-    let moved = false;
-    if(want('up'))   { player.dir='up'; moved = moveTank(player, dtMs) || moved; }
-    if(want('down')) { player.dir='down'; moved = moveTank(player, dtMs) || moved; }
-    if(want('left')) { player.dir='left'; moved = moveTank(player, dtMs) || moved; }
-    if(want('right')){ player.dir='right'; moved = moveTank(player, dtMs) || moved; }
+    // ---- Gather movement input (keyboard or 360° joystick) ----
+    let ix = 0, iy = 0;
+    let mag = 0;
+    let targetAng = player.aimAngle;
+
+    if(input.joyActive){
+      ix = input.joyAx;
+      iy = input.joyAy;
+      mag = input.joyMag;
+      if(mag > 0.001) targetAng = input.joyAng;
+    } else {
+      ix = (input.right ? 1 : 0) + (input.left ? -1 : 0);
+      iy = (input.down ? 1 : 0) + (input.up ? -1 : 0);
+      const l = Math.hypot(ix, iy);
+      if(l > 0){
+        ix /= l; iy /= l;
+        mag = 1;
+        targetAng = Math.atan2(iy, ix);
+      }
+    }
+
+    // Update facing for bullets & render (smooth)
+    if(mag > 0.001){
+      // angle lerp shortest path
+      const a0 = player.aimAngle;
+      let da = targetAng - a0;
+      while(da > Math.PI) da -= Math.PI*2;
+      while(da < -Math.PI) da += Math.PI*2;
+      const turn = 1 - Math.exp(-dtMs/70); // smooth
+      player.aimAngle = a0 + da * turn;
+
+      // keep legacy 4-dir for AI interactions (optional)
+      const ax = Math.cos(player.aimAngle);
+      const ay = Math.sin(player.aimAngle);
+      if(Math.abs(ax) > Math.abs(ay)) player.dir = ax>0 ? 'right':'left';
+      else player.dir = ay>0 ? 'down':'up';
+    }
+
+    // ---- Inertial movement model ----
+    const desiredSpeed = player.speed * mag;
+    const dvx = Math.cos(targetAng) * desiredSpeed;
+    const dvy = Math.sin(targetAng) * desiredSpeed;
+
+    if(mag > 0.001){
+      // accelerate quickly, still smooth
+      const a = 1 - Math.exp(-dtMs/85);
+      player.vx = player.vx + (dvx - player.vx) * a;
+      player.vy = player.vy + (dvy - player.vy) * a;
+    } else {
+      // release: 80~120ms stop
+      const k = Math.exp(-dtMs/95);
+      player.vx *= k;
+      player.vy *= k;
+      if(Math.abs(player.vx) < 0.5) player.vx = 0;
+      if(Math.abs(player.vy) < 0.5) player.vy = 0;
+    }
+
+    // ---- Move with sliding collision (important for narrow roads) ----
+    const nx = player.x + player.vx * dtMs / 1000;
+    const ny = player.y + player.vy * dtMs / 1000;
+
+    // try X
+    if(!rectVsWorld({x:nx, y:player.y, w:player.w, h:player.h})){
+      player.x = nx;
+    } else {
+      player.vx = 0;
+    }
+    // try Y
+    if(!rectVsWorld({x:player.x, y:ny, w:player.w, h:player.h})){
+      player.y = ny;
+    } else {
+      player.vy = 0;
+    }
+
+    player.x = clamp(player.x, TILE, WORLD_W - TILE - player.w);
+    player.y = clamp(player.y, TILE, WORLD_H - TILE - player.h);
 
     if(input.fire) tryFire(player, dtMs);
   }
@@ -482,6 +761,8 @@
       // collision -> choose a new direction soon
       ai.turnCD = Math.min(ai.turnCD, 120);
     }
+
+    t.aimAngle = DIRS[t.dir]?.a ?? t.aimAngle;
 
     // shooting logic
     if(player && player.alive){
@@ -527,10 +808,28 @@
         if(!t.alive) continue;
         if(t.isPlayer === b.ownerIsPlayer) continue;
 
-        const r = { x:t.x, y:t.y, w:t.w, h:t.h };
-        if(b.x > r.x && b.x < r.x+r.w && b.y > r.y && b.y < r.y+r.h){
+        if(b.x > t.x && b.x < t.x+t.w && b.y > t.y && b.y < t.y+t.h){
           b.alive=false;
-          killTank(t);
+
+          // Player hit feedback (sound + white flash + shake + impact ring)
+          if(t.isPlayer){
+            AudioSys.playOuch();
+            t.hitFlashMs = 35;           // ~1–2 frames
+            fx.kickShake(2);             // 1–2px micro shake
+            fx.addRing(b.x, b.y);        // 0.1s white ring
+          }
+
+          // Boss HP logic
+          if(t.isBoss){
+            t.hp -= 1;
+            addExplosion(b.x, b.y);
+            if(t.hp <= 0){
+              killTank(t);
+            }
+          } else {
+            killTank(t);
+          }
+
           if(t.isPlayer){
             state.lives -= 1;
             syncHUD();
@@ -541,9 +840,8 @@
                 player = spawnPlayer();
               }, 450);
             }
-          } else {
+          } else if(!t.isBoss){
             state.score += 100;
-            state.enemiesRemaining = Math.max(0, state.enemiesRemaining - 1);
             syncHUD();
           }
           break;
@@ -553,6 +851,7 @@
     // clean dead bullets
     for(let i=bullets.length-1;i>=0;i--) if(!bullets[i].alive) bullets.splice(i,1);
   }
+
 
   function updateExplosions(dtMs){
     for(const e of explosions){
@@ -564,37 +863,57 @@
   }
 
   function updateSpawns(dtMs){
+    // Boss 出现后不再刷普通敌人（按约定的节奏）
+    if(state.bossSpawned) return;
+
     enemySpawnCD -= dtMs;
-    if(enemySpawnCD <= 0){
-      if(spawnedEnemies < maxEnemiesThisLevel){
-        spawnEnemy();
-        spawnedEnemies += 1;
-        enemySpawnCD = 850 - Math.min(400, state.level*22) + Math.random()*250;
-      }
+    if(enemySpawnCD > 0) return;
+
+    const aliveEnemies = tanks.filter(t => t.alive && !t.isPlayer && !t.isBoss).length;
+    const cap = 6; // 常驻敌人上限（避免屏幕塞满）
+    if(aliveEnemies < cap){
+      spawnEnemy();
+      enemySpawnCD = 850 - Math.min(400, state.level*22) + Math.random()*250;
+    } else {
+      enemySpawnCD = 250;
     }
   }
 
   function update(dtMs){
     if(!grid) resetAll();
 
+    // timers / micro fx
+    fx.update(dtMs);
+    state.matchTimeMs += dtMs;
+
     if(!state.baseAlive){
       gameOver('基地被摧毁了。');
       return;
     }
 
-    // win?
-    if(state.enemiesRemaining <= 0){
-      // ensure no alive enemies
-      const anyEnemy = tanks.some(t => t.alive && !t.isPlayer);
-      if(!anyEnemy) {
-        nextLevel();
-        return;
-      }
+    // Boss spawn after 2 minutes survival
+    if(!state.bossSpawned && state.matchTimeMs >= 120000){
+      state.bossSpawned = true;
+      spawnBoss();
+      // optional: tighten spawn cooldown so boss fight starts immediately
+      enemySpawnCD = 999999;
+    }
+
+    // Victory: survive 2 minutes + kill boss (player must be alive at the moment)
+    if(state.bossSpawned && state.bossKilled && player && player.alive){
+      showOverlay('胜利！', '你存活超过两分钟并击毁了敌方 Boss 坦克！', { showStart:false, showResume:false });
+      paused = true;
+      running = true;
+      return;
     }
 
     updateSpawns(dtMs);
 
     updatePlayer(dtMs);
+
+    for(const t of tanks){
+      if(t.hitFlashMs>0) t.hitFlashMs = Math.max(0, t.hitFlashMs - dtMs);
+    }
 
     for(const t of tanks){
       if(!t.alive) continue;
@@ -605,7 +924,7 @@
     updateBullets(dtMs);
     updateExplosions(dtMs);
 
-    // cleanup dead enemies
+    // cleanup dead non-player tanks
     for(let i=tanks.length-1;i>=0;i--){
       if(!tanks[i].alive && !tanks[i].isPlayer) tanks.splice(i,1);
     }
@@ -636,6 +955,10 @@
 
   function render(){
     clear();
+    const shakeX = fx.shakePx ? (Math.random()*2-1)*fx.shakePx*dpr : 0;
+    const shakeY = fx.shakePx ? (Math.random()*2-1)*fx.shakePx*dpr : 0;
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
     const {scale, ox, oy} = worldToScreen();
 
     // background
@@ -685,26 +1008,76 @@
       if(!t.alive) continue;
       ctx.save();
       ctx.translate(t.x + t.w/2, t.y + t.h/2);
-      ctx.rotate(DIRS[t.dir]?.a || 0);
+
+      const rot = t.isPlayer ? (t.aimAngle ?? 0) : (DIRS[t.dir]?.a || 0);
+      ctx.rotate(rot);
       ctx.translate(-t.w/2, -t.h/2);
-      ctx.fillStyle = t.isPlayer ? COLORS.player : COLORS.enemy;
+
+      const col = t.isPlayer ? COLORS.player : (t.isBoss ? '#ff2a2a' : COLORS.enemy);
+      ctx.fillStyle = col;
       ctx.fillRect(0,0,t.w,t.h);
+
       // turret
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(t.w/2-2, 0, 4, 6);
+
       // barrel
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
       ctx.fillRect(t.w/2-1, -4, 2, 8);
+
+      // Boss HP pips (5)
+      if(t.isBoss){
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(1, t.h-4, t.w-2, 3);
+        const pips = 5;
+        const gap = 1;
+        const pw = Math.floor((t.w-2 - (pips-1)*gap)/pips);
+        for(let i=0;i<pips;i++){
+          const alive = i < t.hp;
+          ctx.fillStyle = alive ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.20)';
+          ctx.fillRect(1 + i*(pw+gap), t.h-4, pw, 3);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.strokeRect(0.5,0.5,t.w-1,t.h-1);
+      }
+
+      // Player hit white flash (1~2 frames)
+      if(t.isPlayer && t.hitFlashMs>0){
+        const a = Math.min(1, t.hitFlashMs/35);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = `rgba(255,255,255,${0.75*a})`;
+        ctx.fillRect(0,0,t.w,t.h);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
       ctx.restore();
     }
 
-    // bullets
+// bullets
     ctx.fillStyle = COLORS.bullet;
     for(const b of bullets){
       if(!b.alive) continue;
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
       ctx.fill();
+    }
+
+    // hit rings (player impact feedback)
+    if(fx.rings.length){
+      ctx.save();
+      for(const r of fx.rings){
+        const p = r.t/100;
+        const rr = 4 + p*10;
+        const a = 1 - p;
+        ctx.globalAlpha = 0.95*a;
+        ctx.strokeStyle = 'rgba(255,255,255,1)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, rr, 0, Math.PI*2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
     // bushes on top
@@ -747,6 +1120,9 @@
       ctx.fillText('WASD / 方向键移动  空格开火  P暂停  R重开', 12*dpr, (canvas.height - 12*dpr));
       ctx.restore();
     }
+
+    // outer shake wrapper restore
+    ctx.restore();
   }
 
   // ====== Loop ======
