@@ -2296,7 +2296,8 @@ fire(bullets, audio, aimTarget, fx){
       this.gameOver=false;
       this.gameWon=false;
       this.paused=false;
-      // Boss spawn timer - spawns after 60 seconds
+      // Reset survival time and boss timer
+      this.tSec = 0;
       this.bossSpawnTimer = 0;
       this.bossSpawnDelay = 60; // 60 seconds to spawn boss
       this.bossSpawned = false;
@@ -2330,6 +2331,8 @@ fire(bullets, audio, aimTarget, fx){
       this.levelId = lv;
       try { localStorage.setItem("tank_level", String(lv)); } catch(_){}
       this.reset();
+      // Play match start sound when level changes
+      if (this.audio) this.audio.playMatchStart();
       if (typeof this.onLevelChange === "function") this.onLevelChange(lv);
     }
 
@@ -2765,4 +2768,3 @@ ctx.restore();
 </script>
 </body>
 </html>
-
