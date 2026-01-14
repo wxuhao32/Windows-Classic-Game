@@ -328,13 +328,12 @@
           <p>
             <b>场地1</b>：经典地图（更适合休闲）。<br/>
             <b>场地2</b>：微迷宫地图（更难、更复杂）。<br/>
-            <b>场地3</b>：沙二风格地图（Dust2 启发的平面构造：A长 / 中路 / B洞 / B门）。<br/>
-            <b>场地4</b>：炼狱小镇风格地图（Inferno 平面布局 1:1 还原：中路 / 香蕉道 / A / B）。</p>
+            <b>场地3</b>：沙二风格地图（Dust2 启发的平面构造：A长 / 中路 / B洞 / B门）。
+          </p>
           <div class="start-row" style="gap:10px; flex-wrap:wrap">
             <button class="btn" data-level="1">场地1（经典）</button>
             <button class="btn" data-level="2">场地2（迷宫）</button>
             <button class="btn primary" data-level="3">场地3（沙二风格）</button>
-            <button class="btn" data-level="4">场地4（炼狱小镇）</button>
           </div>
           <div class="tiny" style="opacity:.9; margin-top:10px">切换场地会立即重开本局</div>
           <div class="tiny" style="opacity:.7">点击遮罩区域可关闭</div>
@@ -444,7 +443,7 @@
 
   const normLevel = (v) => {
     const n = parseInt(v, 10);
-    return (n===2 || n===3 || n===4) ? n : 1;
+    return (n===2 || n===3) ? n : 1;
   };
   const getStoredLevel = () => {
     try { return normLevel(localStorage.getItem("tank_level") || "1"); } catch(_){ return 1; }
@@ -452,7 +451,7 @@
   const setStoredLevel = (lv) => { try{ localStorage.setItem("tank_level", String(lv)); }catch(_){} };
 
   const syncLevelUI = (lv = getStoredLevel()) => {
-    if (levelText) levelText.textContent = (lv===4 ? "场地4" : (lv===3 ? "场地3" : (lv===2 ? "场地2" : "场地1")));
+    if (levelText) levelText.textContent = (lv===3 ? "场地3" : (lv===2 ? "场地2" : "场地1"));
   };
   syncLevelUI();
 
@@ -957,7 +956,7 @@ class TileMap {
       this.w=w; this.h=h;
       this.tiles = new Uint8Array(w*h);
       this.grassDecor = new Array(w*h);
-      this.levelId = ((levelId|0)===2 || (levelId|0)===3 || (levelId|0)===4) ? (levelId|0) : 1;
+      this.levelId = ((levelId|0)===2 || (levelId|0)===3) ? (levelId|0) : 1;
       this.reset(this.levelId);
 
       // Pre-generated subtle star/noise field to avoid per-frame random flicker
@@ -997,71 +996,13 @@ class TileMap {
     isSolid(t){ return t===TILE.BRICK || t===TILE.WATER; }
 
     reset(levelId=this.levelId||1){
-      this.levelId = ((levelId|0)===2 || (levelId|0)===3 || (levelId|0)===4) ? (levelId|0) : 1;
+      this.levelId = ((levelId|0)===2 || (levelId|0)===3) ? (levelId|0) : 1;
       this.tiles.fill(TILE.EMPTY);
       this.grassDecor.fill(null);
 
 
 
-      
-      // Level 4: Inferno-inspired (tactical flat layout 1:1 from provided map image)
-      if (this.levelId===4){
-        const w=this.w, h=this.h;
-        // Use WATER as indestructible wall in level 4 (plaster/stone walls)
-        this.tiles.fill(TILE.WATER);
-
-        const INFERNO_MASK = [
-        "00000000000000011110000000000000",
-        "00000000000000011110000000000000",
-        "00000000000011111110000000000000",
-        "00000000000011111110000000000000",
-        "00000000000011111100000000000000",
-        "00000000000011111100000000000000",
-        "00000000000011111100000001110000",
-        "00000000000011111100000001110000",
-        "00000000000000000000000011110000",
-        "00000000000000000000000011111111",
-        "00000000000000000000000011111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000001111111",
-        "00000000000000000000000111111111",
-        "00000000000000000000000111111111",
-        "00000000000000000000000111111111",
-        "00000000000000000000000000111111",
-        "11000000000000000000000000111111",
-        "11000000000000000000000000111111",
-        "11000000011110000000000000111111",
-        "00000000011110000000000000111111",
-        "00000000011110000000000000111111",
-        "00000000011100000000011111111000",
-        "00000000011100000000011111111000",
-        "00000000011100000000011111111000",
-        "00000000011100000000000000000000",
-        "00000000000000000000000000000000",
-        "00000000000000000000000000000000",
-      ];
-
-        for (let y=0;y<h;y++){
-          const row = INFERNO_MASK[y] || "";
-          for (let x=0;x<w;x++){
-            if (row.charCodeAt(x)===49) { // '1'
-              this.set(x,y,TILE.EMPTY);
-            }
-          }
-        }
-
-        // Ensure spawn rooms are clear (safety padding)
-        this.clearArea(0, 20, 5, 5);
-        this.clearArea(w-6, 5, 6, 6);
-
-        return;
-      }
-
-// Level 3: Dust2-inspired (flat layout) — A长 / 中路 / B洞 / B门
+      // Level 3: Dust2-inspired (flat layout) — A长 / 中路 / B洞 / B门
       if (this.levelId===3){
         const w=this.w, h=this.h;
 
@@ -1368,7 +1309,6 @@ class TileMap {
     draw(ctx, tSec){
       const isMaze = this.levelId===2;
       const isDust = this.levelId===3;
-      const isInferno = this.levelId===4;
 
       if (isMaze){
         // Cached high-fidelity floor for Level 2 (maze)
@@ -1489,63 +1429,6 @@ class TileMap {
         ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
         ctx.globalAlpha = 1;
 
-      
-      } else if (isInferno){
-        // Cached Mediterranean stone floor for Level 4 (Inferno-inspired)
-        if (!this._bg4){
-          const c = document.createElement("canvas");
-          c.width = this.w*TILE_SIZE;
-          c.height = this.h*TILE_SIZE;
-          const b = c.getContext("2d");
-
-          const g = b.createLinearGradient(0,0,0,CANVAS_SIZE);
-          g.addColorStop(0, "#e8e2d6");
-          g.addColorStop(1, "#bfb3a2");
-          b.fillStyle = g;
-          b.fillRect(0,0,c.width,c.height);
-
-          // stone tile grid
-          b.strokeStyle = "rgba(0,0,0,0.06)";
-          b.lineWidth = 1;
-          for (let i=0;i<=c.width;i+=16){ b.beginPath(); b.moveTo(i+0.5,0); b.lineTo(i+0.5,c.height); b.stroke(); }
-          for (let i=0;i<=c.height;i+=16){ b.beginPath(); b.moveTo(0,i+0.5); b.lineTo(c.width,i+0.5); b.stroke(); }
-
-          // subtle warm noise overlay
-          try{
-            if (this._noiseCanvas){
-              b.globalAlpha = 0.22;
-              b.globalCompositeOperation = "overlay";
-              b.drawImage(this._noiseCanvas,0,0,c.width,c.height);
-              b.globalCompositeOperation = "source-over";
-              b.globalAlpha = 1;
-            }
-          }catch(_){}
-
-          // sun / ambient vignette
-          const sun = b.createRadialGradient(CANVAS_SIZE*0.62, CANVAS_SIZE*0.18, 40, CANVAS_SIZE*0.62, CANVAS_SIZE*0.18, 520);
-          sun.addColorStop(0, "rgba(255,255,255,0.18)");
-          sun.addColorStop(1, "rgba(0,0,0,0.22)");
-          b.fillStyle = sun;
-          b.fillRect(0,0,c.width,c.height);
-
-          this._bg4 = c;
-        }
-        ctx.drawImage(this._bg4, 0, 0);
-
-        // very subtle moving light sweep (modern feel)
-        ctx.save();
-        ctx.globalCompositeOperation = "overlay";
-        ctx.globalAlpha = 0.06;
-        const sw = 140;
-        const sx = ((tSec*22) % (CANVAS_SIZE+sw)) - sw;
-        const sweep = ctx.createLinearGradient(sx,0,sx+sw,0);
-        sweep.addColorStop(0,"rgba(255,255,255,0)");
-        sweep.addColorStop(0.5,"rgba(255,255,255,1)");
-        sweep.addColorStop(1,"rgba(255,255,255,0)");
-        ctx.fillStyle = sweep;
-        ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
-        ctx.restore();
-
       } else {
         const g = ctx.createLinearGradient(0,0,0,CANVAS_SIZE);
         g.addColorStop(0, "#0f1b2c");
@@ -1613,49 +1496,7 @@ class TileMap {
       const px=x*TILE_SIZE, py=y*TILE_SIZE;
 
 
-      
-      // Level 4 tile shading: Inferno — plaster/stone walls (uses WATER for collision)
-      if (this.levelId===4){
-        if (t===TILE.WATER){
-          // warm plaster wall with bevel
-          const g = ctx.createLinearGradient(px, py, px, py+TILE_SIZE);
-          g.addColorStop(0, (((x+y)&1)===0) ? "#f2eee6" : "#ece6db");
-          g.addColorStop(1, "#bfb3a2");
-          ctx.fillStyle = g;
-          ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
-
-          // subtle cracks
-          ctx.strokeStyle = "rgba(80,60,40,0.12)";
-          ctx.lineWidth = 1;
-          if (((x*7+y*11)&7)===0){
-            ctx.beginPath();
-            ctx.moveTo(px+2, py+4);
-            ctx.lineTo(px+TILE_SIZE-3, py+6);
-            ctx.lineTo(px+TILE_SIZE-6, py+TILE_SIZE-4);
-            ctx.stroke();
-          }
-
-          // bevel edges (3D)
-          ctx.fillStyle = "rgba(255,255,255,0.20)";
-          ctx.fillRect(px,py, TILE_SIZE,1);
-          ctx.fillRect(px,py, 1,TILE_SIZE);
-          ctx.fillStyle = "rgba(0,0,0,0.22)";
-          ctx.fillRect(px,py+TILE_SIZE-1, TILE_SIZE,1);
-          ctx.fillRect(px+TILE_SIZE-1,py, 1,TILE_SIZE);
-
-          // tiny bolt occasionally
-          if (((x*13+y*9)&31)===0){
-            ctx.fillStyle = "rgba(0,0,0,0.25)";
-            ctx.beginPath();
-            ctx.arc(px+TILE_SIZE*0.3, py+TILE_SIZE*0.35, 1.2, 0, Math.PI*2);
-            ctx.fill();
-          }
-          return;
-        }
-        // keep other tiles default (rare in level 4)
-      }
-
-// Level 3 tile shading: sandstone walls + crates + dust decals
+      // Level 3 tile shading: sandstone walls + crates + dust decals
       if (this.levelId===3){
         if (t===TILE.WATER){
           // Indestructible sandstone wall (uses WATER for collision)
@@ -2404,8 +2245,8 @@ fire(bullets, audio, aimTarget, fx){
       this.bullets = [];
       this.enemies = [];
       this.spawnTimer = 0;
-      this.spawnInterval = (this.levelId===2 ? 1.05 : (this.levelId===4 ? 1.10 : (this.levelId===3 ? 1.18 : 1.35)));
-      this.maxEnemies = (this.levelId===2 ? 6 : (this.levelId===4 ? 6 : (this.levelId===3 ? 5 : 4)));
+      this.spawnInterval = (this.levelId===2 ? 1.05 : (this.levelId===3 ? 1.18 : 1.35));
+      this.maxEnemies = (this.levelId===2 ? 6 : (this.levelId===3 ? 5 : 4));
       this.score=0;
       this.gameOver=false;
       this.paused=false;
@@ -2434,7 +2275,7 @@ fire(bullets, audio, aimTarget, fx){
 
     setLevel(id){
       const n = parseInt(id, 10);
-      const lv = (n===2 || n===3 || n===4) ? n : 1;
+      const lv = (n===2 || n===3) ? n : 1;
       if (lv === this.levelId) return;
       this.levelId = lv;
       try { localStorage.setItem("tank_level", String(lv)); } catch(_){}
