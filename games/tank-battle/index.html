@@ -242,6 +242,7 @@
       backdrop-filter: blur(6px);
       border-radius: 18px;
     }
+    .hidden{ display:none !important; }
     .start-card{
       pointer-events:auto;
       width: min(430px, 86%);
@@ -298,6 +299,7 @@
         <div class="pill"><span class="dot blue"></span>敌人 <b id="enemies">0</b></div>
         <div class="pill"><span class="dot red"></span>状态 <b id="status">运行中</b></div>
         <button class="pill pillBtn" id="fullscreenBtn" type="button" title="进入/退出全屏（隐藏浏览器地址栏，解决虚拟按键遮挡）"><span class="fsIcon" aria-hidden="true">⛶</span><span id="fsText">全屏显示</span></button>
+        <button class="pill pillBtn" id="levelBtn" type="button" title="选择场地（场地2：微迷宫更难、画质更高）"><span class="fsIcon" aria-hidden="true">🗺️</span><span id="levelText">场地1</span></button>
       </div>
     </div>
 
@@ -318,6 +320,23 @@
         </div>
       </div>
     </div>
+
+
+      <div class="start-overlay hidden" id="levelOverlay" role="dialog" aria-modal="true" aria-label="选择场地">
+        <div class="start-card">
+          <h2>选择场地</h2>
+          <p>
+            <b>场地1</b>：经典地图（更适合休闲）。<br/>
+            <b>场地2</b>：微迷宫地图（更难、更复杂，画质更高）。
+          </p>
+          <div class="start-row" style="gap:10px">
+            <button class="btn" data-level="1">场地1（经典）</button>
+            <button class="btn primary" data-level="2">场地2（迷宫）</button>
+          </div>
+          <div class="tiny" style="opacity:.9; margin-top:10px">切换场地会立即重开本局</div>
+          <div class="tiny" style="opacity:.7">点击遮罩区域可关闭</div>
+        </div>
+      </div>
 
     <div class="footer">
       <div class="hint">
@@ -358,6 +377,8 @@
 <script>
 (() => {
   "use strict";
+
+  let game = null;
 
   // Fullscreen toggle: used to hide browser address bar / UI so mobile virtual buttons are not blocked.
   const fullscreenBtn = document.getElementById("fullscreenBtn");
@@ -409,7 +430,42 @@
 
     document.addEventListener("fullscreenchange", updateFsUI);
     document.addEventListener("webkitfullscreenchange", updateFsUI);
+
     updateFsUI();
+  }
+
+  // Level selection UI (Map 1 / Map 2)
+  const levelBtn = document.getElementById("levelBtn");
+  const levelText = document.getElementById("levelText");
+  const levelOverlay = document.getElementById("levelOverlay");
+
+  const normLevel = (v) => (String(v)==="2" ? 2 : 1);
+  const getStoredLevel = () => {
+    try { return normLevel(localStorage.getItem("tank_level") || "1"); } catch(_){ return 1; }
+  };
+  const setStoredLevel = (lv) => { try{ localStorage.setItem("tank_level", String(lv)); }catch(_){} };
+
+  const syncLevelUI = (lv = getStoredLevel()) => {
+    if (levelText) levelText.textContent = lv===2 ? "场地2" : "场地1";
+  };
+  syncLevelUI();
+
+  if (levelBtn && levelOverlay){
+    levelBtn.addEventListener("click", () => {
+      levelOverlay.classList.remove("hidden");
+    });
+    levelOverlay.addEventListener("click", (e) => {
+      if (e.target === levelOverlay) levelOverlay.classList.add("hidden");
+    });
+    levelOverlay.querySelectorAll("[data-level]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const lv = normLevel(btn.getAttribute("data-level"));
+        setStoredLevel(lv);
+        syncLevelUI(lv);
+        levelOverlay.classList.add("hidden");
+        if (game) game.setLevel(lv);
+      });
+    });
   }
 
 const CANVAS_SIZE = 512;
@@ -528,7 +584,12 @@ const CANVAS_SIZE = 512;
       const a = this.killCallouts && this.killCallouts[idx];
       if (!a) return;
       try {
-        a.pause();
+        // Stop any currently playing callout first (mobile Safari can drop the 5th+ otherwise)
+        if (this.killCallouts){
+          for (const k of this.killCallouts){
+            try { k.pause(); k.currentTime = 0; } catch(_){}
+          }
+        }
         a.currentTime = 0;
         a.play().catch(()=>{});
       } catch(_){ }
@@ -886,11 +947,12 @@ const CANVAS_SIZE = 512;
   }
 
 class TileMap {
-    constructor(w, h) {
+    constructor(w, h, levelId=1) {
       this.w=w; this.h=h;
       this.tiles = new Uint8Array(w*h);
       this.grassDecor = new Array(w*h);
-      this.reset();
+      this.levelId = ((levelId|0)===2)?2:1;
+      this.reset(this.levelId);
 
       // Pre-generated subtle star/noise field to avoid per-frame random flicker
       this.stars = Array.from({length: 55}, () => ({
@@ -928,9 +990,117 @@ class TileMap {
     set(x,y,t){ if(!this.inBounds(x,y)) return; this.tiles[this.idx(x,y)] = t; }
     isSolid(t){ return t===TILE.BRICK || t===TILE.WATER; }
 
-    reset(){
+    reset(levelId=this.levelId||1){
+      this.levelId = ((levelId|0)===2)?2:1;
       this.tiles.fill(TILE.EMPTY);
       this.grassDecor.fill(null);
+
+
+      // Level 2: Micro-maze (hard) + more premium visual theme
+      if (this.levelId===2){
+        // Use WATER as indestructible "steel wall" in level 2 (BRICK stays breakable)
+        this.tiles.fill(TILE.WATER);
+
+        const w=this.w, h=this.h;
+        let s = 0xC0FFEE; // deterministic seed for repeatable maze
+        const rng = () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296;
+        const inb = (x,y) => x>0 && x<w-1 && y>0 && y<h-1;
+
+        // Cells on odd coordinates
+        for (let y=1;y<h-1;y+=2){
+          for (let x=1;x<w-1;x+=2){
+            this.set(x,y,TILE.EMPTY);
+          }
+        }
+
+        // DFS carve
+        const visited = new Uint8Array(w*h);
+        const stack = [[1,1]];
+        visited[this.idx(1,1)] = 1;
+        const dirs = [[2,0],[-2,0],[0,2],[0,-2]];
+        while(stack.length){
+          const top = stack[stack.length-1];
+          const cx = top[0], cy = top[1];
+          const opts = [];
+          for (const d of dirs){
+            const nx=cx+d[0], ny=cy+d[1];
+            if (!inb(nx,ny)) continue;
+            const ii=this.idx(nx,ny);
+            if (visited[ii]) continue;
+            opts.push([nx,ny,d[0],d[1]]);
+          }
+          if (opts.length){
+            const p = opts[(rng()*opts.length)|0];
+            const nx=p[0], ny=p[1], dx=p[2], dy=p[3];
+            this.set(cx+dx/2, cy+dy/2, TILE.EMPTY);
+            this.set(nx, ny, TILE.EMPTY);
+            visited[this.idx(nx,ny)] = 1;
+            stack.push([nx,ny]);
+          } else {
+            stack.pop();
+          }
+        }
+
+        // Carve a few "rooms" (make routing less linear but still maze-like)
+        const rooms = [
+          {x:3,y:3,w:7,h:6},
+          {x:w-10,y:3,w:7,h:6},
+          {x:3,y:h-10,w:7,h:6},
+          {x:(w/2-4)|0,y:(h/2-3)|0,w:9,h:7},
+        ];
+        for (const r of rooms) this.clearArea(r.x,r.y,r.w,r.h);
+
+        // Add breakable cover blocks (BRICK) in wider spaces
+        for (let y=1;y<h-1;y++){
+          for (let x=1;x<w-1;x++){
+            if (this.get(x,y)!==TILE.EMPTY) continue;
+            let n=0;
+            if (this.get(x+1,y)===TILE.EMPTY) n++;
+            if (this.get(x-1,y)===TILE.EMPTY) n++;
+            if (this.get(x,y+1)===TILE.EMPTY) n++;
+            if (this.get(x,y-1)===TILE.EMPTY) n++;
+            if (n>=3 && rng()<0.10) this.set(x,y,TILE.BRICK);
+          }
+        }
+
+        // Decorative grass (non-blocking)
+        for (let y=1;y<h-1;y++){
+          for (let x=1;x<w-1;x++){
+            if (this.get(x,y)!==TILE.EMPTY) continue;
+            if (rng()<0.10) this.set(x,y,TILE.GRASS);
+          }
+        }
+
+        // Keep spawn areas open
+        this.clearArea(1, this.h-4, 5, 3);
+        this.clearArea(this.w-6, 1, 5, 3);
+
+        // Connect the spawn rooms to the maze so nobody gets sealed in
+        for (let i=0;i<5;i++) this.set(5+i, this.h-5, TILE.EMPTY);        // player door
+        for (let i=0;i<5;i++) this.set(this.w-6-i, 4, TILE.EMPTY);        // enemy door
+
+        // Grass decoration points (same logic as level 1)
+        for (let y=0;y<this.h;y++){
+          for (let x=0;x<this.w;x++){
+            const i = this.idx(x,y);
+            if (this.tiles[i] !== TILE.GRASS) continue;
+            const pts = [];
+            let ss = (((x*73856093) ^ (y*19349663)) >>> 0);
+            const rr = () => (ss = (ss*1664525 + 1013904223) >>> 0) / 4294967296;
+            const count = 4 + ((rr()*6)|0);
+            for (let k=0;k<count;k++){
+              pts.push({
+                x: 2 + Math.floor(rr()*(TILE_SIZE-4)),
+                y: 2 + Math.floor(rr()*(TILE_SIZE-4)),
+                r: 1 + Math.floor(rr()*2),
+              });
+            }
+            this.grassDecor[i] = pts;
+          }
+        }
+
+        return;
+      }
 
       for (let x=0;x<this.w;x++){ this.set(x,0,TILE.BRICK); this.set(x,this.h-1,TILE.BRICK); }
       for (let y=0;y<this.h;y++){ this.set(0,y,TILE.BRICK); this.set(this.w-1,y,TILE.BRICK); }
@@ -1024,42 +1194,112 @@ class TileMap {
     }
 
     draw(ctx, tSec){
-      const g = ctx.createLinearGradient(0,0,0,CANVAS_SIZE);
-      g.addColorStop(0, "#0f1b2c");
-      g.addColorStop(1, "#0b1220");
-      ctx.fillStyle = g;
-      ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+      const premium = this.levelId===2;
+
+      if (premium){
+        // Cached high-fidelity floor for Level 2 (maze)
+        if (!this._bg2){
+          const c = document.createElement("canvas");
+          c.width = this.w*TILE_SIZE;
+          c.height = this.h*TILE_SIZE;
+          const b = c.getContext("2d");
+
+          const g = b.createLinearGradient(0,0,0,CANVAS_SIZE);
+          g.addColorStop(0, "#0b111c");
+          g.addColorStop(1, "#060910");
+          b.fillStyle = g;
+          b.fillRect(0,0,c.width,c.height);
+
+          // micro grid (8px)
+          b.strokeStyle = "rgba(255,255,255,0.035)";
+          b.lineWidth = 1;
+          for (let i=0;i<=c.width;i+=8){ b.beginPath(); b.moveTo(i+0.5,0); b.lineTo(i+0.5,c.height); b.stroke(); }
+          for (let i=0;i<=c.height;i+=8){ b.beginPath(); b.moveTo(0,i+0.5); b.lineTo(c.width,i+0.5); b.stroke(); }
+
+          // diagonal brushed metal
+          b.strokeStyle = "rgba(255,255,255,0.018)";
+          for (let i=-c.height;i<c.width;i+=12){
+            b.beginPath();
+            b.moveTo(i,0);
+            b.lineTo(i+c.height,c.height);
+            b.stroke();
+          }
+
+          // noise overlay baked
+          if (this._noiseCanvas){
+            try {
+              const p = b.createPattern(this._noiseCanvas, "repeat");
+              b.globalAlpha = 0.12;
+              b.fillStyle = p;
+              b.fillRect(0,0,c.width,c.height);
+              b.globalAlpha = 1;
+            } catch(_){}
+          }
+
+          // vignette
+          const vg = b.createRadialGradient(CANVAS_SIZE/2, CANVAS_SIZE/2, 80, CANVAS_SIZE/2, CANVAS_SIZE/2, 420);
+          vg.addColorStop(0, "rgba(255,255,255,0.02)");
+          vg.addColorStop(1, "rgba(0,0,0,0.42)");
+          b.fillStyle = vg;
+          b.fillRect(0,0,c.width,c.height);
+
+          this._bg2 = c;
+        }
+        ctx.drawImage(this._bg2, 0, 0);
+
+        // animated light sweep (premium feel)
+        const sx = (0.5 + 0.5*Math.sin(tSec*0.35)) * CANVAS_SIZE;
+        const sweep = ctx.createLinearGradient(sx-220, 0, sx+220, CANVAS_SIZE);
+        sweep.addColorStop(0, "rgba(255,255,255,0)");
+        sweep.addColorStop(0.5, "rgba(120,200,255,0.10)");
+        sweep.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = sweep;
+        ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+        ctx.globalAlpha = 1;
+
+      } else {
+        const g = ctx.createLinearGradient(0,0,0,CANVAS_SIZE);
+        g.addColorStop(0, "#0f1b2c");
+        g.addColorStop(1, "#0b1220");
+        ctx.fillStyle = g;
+        ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+      }
 
       // subtle noise overlay (one-time pattern)
-      if (!this._noisePattern && this._noiseCanvas){
+      if (!premium && !this._noisePattern && this._noiseCanvas){
         try { this._noisePattern = ctx.createPattern(this._noiseCanvas, "repeat"); } catch(_) { this._noisePattern = null; }
       }
-      if (this._noisePattern){
+      if (!premium && this._noisePattern){
         ctx.globalAlpha = 0.10;
         ctx.fillStyle = this._noisePattern;
         ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
         ctx.globalAlpha = 1;
       }
 
+      const starMul = premium ? 0.06 : 1;
+
       // subtle star field (stable positions; animated alpha)
       ctx.fillStyle = "rgba(255,255,255,1)";
       for (const s of this.stars){
         const a = 0.01 + (0.5 + 0.5*Math.sin(tSec*1.5 + s.p)) * s.s;
-        ctx.globalAlpha = a;
+        ctx.globalAlpha = a * starMul;
         ctx.fillRect(s.x, s.y, 1, 1);
       }
       ctx.globalAlpha = 1;
+      if (!premium){
+        ctx.strokeStyle = "rgba(255,255,255,0.025)";
+        ctx.lineWidth = 1;
+        for (let i=0;i<=this.w;i++){
+          const x = i*TILE_SIZE + 0.5;
+          ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,this.h*TILE_SIZE); ctx.stroke();
+        }
+        for (let i=0;i<=this.h;i++){
+          const y = i*TILE_SIZE + 0.5;
+          ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(this.w*TILE_SIZE,y); ctx.stroke();
+        }
+      }
 
-      ctx.strokeStyle = "rgba(255,255,255,0.025)";
-      ctx.lineWidth = 1;
-      for (let i=0;i<=this.w;i++){
-        const x = i*TILE_SIZE + 0.5;
-        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,this.h*TILE_SIZE); ctx.stroke();
-      }
-      for (let i=0;i<=this.h;i++){
-        const y = i*TILE_SIZE + 0.5;
-        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(this.w*TILE_SIZE,y); ctx.stroke();
-      }
 
       for(let y=0;y<this.h;y++){
         for(let x=0;x<this.w;x++){
@@ -1083,6 +1323,91 @@ class TileMap {
 
     drawTile(ctx,x,y,t, tSec){
       const px=x*TILE_SIZE, py=y*TILE_SIZE;
+
+      // Level 2 tile shading: more modern, beveled, higher contrast
+      if (this.levelId===2){
+        if (t===TILE.WATER){
+          // Indestructible "steel wall" (uses WATER tile type for collision)
+          const g = ctx.createLinearGradient(px, py, px, py+TILE_SIZE);
+          g.addColorStop(0, "#2a3544");
+          g.addColorStop(1, "#131a24");
+          ctx.fillStyle = g;
+          ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+
+          // bevel
+          ctx.fillStyle = "rgba(255,255,255,0.10)";
+          ctx.fillRect(px+1,py+1,TILE_SIZE-2,1);
+          ctx.fillRect(px+1,py+1,1,TILE_SIZE-2);
+          ctx.fillStyle = "rgba(0,0,0,0.40)";
+          ctx.fillRect(px+1,py+TILE_SIZE-2,TILE_SIZE-2,1);
+          ctx.fillRect(px+TILE_SIZE-2,py+1,1,TILE_SIZE-2);
+
+          // panel lines
+          ctx.fillStyle = "rgba(255,255,255,0.04)";
+          ctx.fillRect(px+3, py+5, TILE_SIZE-6, 1);
+          ctx.fillRect(px+3, py+10, TILE_SIZE-6, 1);
+
+          // bolts
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          const b = 2.6;
+          ctx.beginPath(); ctx.arc(px+3, py+3, b, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(px+TILE_SIZE-3, py+3, b, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(px+3, py+TILE_SIZE-3, b, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(px+TILE_SIZE-3, py+TILE_SIZE-3, b, 0, Math.PI*2); ctx.fill();
+
+          // subtle edge glow
+          if (((x+y)&3)===0){
+            ctx.globalCompositeOperation = "lighter";
+            ctx.strokeStyle = "rgba(120,200,255,0.10)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(px+0.5, py+0.5, TILE_SIZE-1, TILE_SIZE-1);
+            ctx.globalCompositeOperation = "source-over";
+          }
+          return;
+        }
+
+        if (t===TILE.BRICK){
+          // Breakable cover (warmer, "crate" feel)
+          const g = ctx.createLinearGradient(px, py, px+TILE_SIZE, py+TILE_SIZE);
+          g.addColorStop(0, "#c35e33");
+          g.addColorStop(1, "#6f2b1c");
+          ctx.fillStyle = g;
+          ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+
+          // ribs
+          ctx.fillStyle = "rgba(255,255,255,0.08)";
+          ctx.fillRect(px+2, py+3, TILE_SIZE-4, 2);
+          ctx.fillRect(px+2, py+TILE_SIZE-5, TILE_SIZE-4, 2);
+
+          // cracks/scratches
+          ctx.strokeStyle = "rgba(0,0,0,0.35)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px+4, py+6); ctx.lineTo(px+10, py+4);
+          ctx.moveTo(px+6, py+12); ctx.lineTo(px+12, py+9);
+          ctx.stroke();
+
+          // edge
+          ctx.strokeStyle = "rgba(0,0,0,0.25)";
+          ctx.strokeRect(px+0.5, py+0.5, TILE_SIZE-1, TILE_SIZE-1);
+          return;
+        }
+
+        if (t===TILE.GRASS){
+          // Slightly richer grass for level 2
+          ctx.fillStyle = "rgba(46, 178, 92, 0.78)";
+          ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+          ctx.fillStyle = "rgba(18, 92, 44, 0.62)";
+          const pts = this.grassDecor[this.idx(x,y)] || [];
+          for (const p of pts) ctx.fillRect(px+p.x, py+p.y, p.r, p.r);
+          ctx.globalAlpha = 0.20;
+          ctx.fillStyle = "rgba(255,255,255,1)";
+          ctx.fillRect(px+1, py+1, TILE_SIZE-2, 1);
+          ctx.globalAlpha = 1;
+          return;
+        }
+      }
+
       if (t===TILE.BRICK){
         ctx.fillStyle = "#8c3b2f";
         ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
@@ -1600,7 +1925,9 @@ fire(bullets, audio, aimTarget, fx){
       this.vignette.addColorStop(1, "rgba(0,0,0,0.32)");
       // 移除扫描线效果（会在部分显示器/缩放下产生一条明显的高亮横线）
       this.scanAlpha = 0;
-      this.map = new TileMap(GRID, GRID);
+      this.levelId = parseInt(localStorage.getItem("tank_level") || "1", 10);
+      if (this.levelId !== 2) this.levelId = 1;
+      this.map = new TileMap(GRID, GRID, this.levelId);
       this.input = new Input();
 
       this.paused = false;
@@ -1633,15 +1960,15 @@ fire(bullets, audio, aimTarget, fx){
     }
 
     reset(){
-      this.map.reset();
+      this.map.reset(this.levelId);
       const px = 1*TILE_SIZE + 1;
       const py = (GRID-3)*TILE_SIZE + 1;
       this.player = new Player(px, py);
       this.bullets = [];
       this.enemies = [];
       this.spawnTimer = 0;
-      this.spawnInterval = 1.35;
-      this.maxEnemies = 4;
+      this.spawnInterval = (this.levelId===2 ? 1.05 : 1.35);
+      this.maxEnemies = (this.levelId===2 ? 6 : 4);
       this.score=0;
       this.gameOver=false;
       this.paused=false;
@@ -1666,6 +1993,17 @@ fire(bullets, audio, aimTarget, fx){
       this.updateHUD();
       if (typeof this.onPauseChange === "function") this.onPauseChange(this.paused);
     }
+
+
+    setLevel(id){
+      const lv = (id===2 || id==="2") ? 2 : 1;
+      if (lv === this.levelId) return;
+      this.levelId = lv;
+      try { localStorage.setItem("tank_level", String(lv)); } catch(_){}
+      this.reset();
+      if (typeof this.onLevelChange === "function") this.onLevelChange(lv);
+    }
+
 
     onEnemyKilled(){
       // 10s combo window: reset to 1 if timeout; otherwise increment (cap 5)
@@ -1937,7 +2275,7 @@ ctx.restore();
   }
 
   const canvas = document.getElementById("game");
-  const game = new Game(canvas);
+  game = new Game(canvas);
 
   // Mobile touch controls (D-pad + fire + pause). Shown only on touch devices.
   (function setupTouchControls(){
