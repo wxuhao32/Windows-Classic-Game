@@ -92,6 +92,7 @@
     .dot.green{ background: rgba(74,222,128,0.95); }
     .dot.blue{ background: rgba(96,165,250,0.95); }
     .dot.red{ background: rgba(255,107,107,0.95); }
+    .dot.yellow{ background: rgba(250,204,21,0.95); }
 
     .stage{ display:flex; align-items:center; justify-content:center; position:relative; min-height:0; }
     canvas#game{
@@ -297,6 +298,7 @@
         <div class="pill"><span class="dot green"></span>得分 <b id="score">0</b></div>
         <div class="pill"><span class="dot green"></span>生命 <b id="hp">4</b>/<b id="hpMax">4</b></div>
         <div class="pill"><span class="dot blue"></span>敌人 <b id="enemies">0</b></div>
+        <div class="pill"><span class="dot yellow"></span>生存 <b id="survival">0</b>s</div>
         <div class="pill"><span class="dot red"></span>状态 <b id="status">运行中</b></div>
         <button class="pill pillBtn" id="fullscreenBtn" type="button" title="进入/退出全屏（隐藏浏览器地址栏，解决虚拟按键遮挡）"><span class="fsIcon" aria-hidden="true">⛶</span><span id="fsText">全屏显示</span></button>
         <button class="pill pillBtn" id="levelBtn" type="button" title="选择场地（场地1：经典；场地2：微迷宫更难；场地3：沙二风格）"><span class="fsIcon" aria-hidden="true">🗺️</span><span id="levelText">场地1</span></button>
@@ -543,6 +545,14 @@ const CANVAS_SIZE = 512;
       this.bgm.loop = true;
       this.bgm.volume = 0.35;
 
+      // Task start voice (user-provided mp3)
+      this.matchStart = new Audio("audio/对局.mp3");
+      this.matchStart.volume = 0.9;
+      
+      // Player hurt voice (user-provided mp3)
+      this.playerHurt = new Audio("audio/哎哟.mp3");
+      this.playerHurt.volume = 0.9;
+
       // Killstreak voice callouts (user-provided mp3s in /audio)
       // Files expected: 一杀.mp3, 双杀.mp3, 三杀.mp3, 四杀.mp3, 五杀.mp3
       this.killCallouts = ["一杀.mp3","双杀.mp3","三杀.mp3","四杀.mp3","五杀.mp3"].map((fn)=>{
@@ -597,6 +607,22 @@ const CANVAS_SIZE = 512;
         }
         a.currentTime = 0;
         a.play().catch(()=>{});
+      } catch(_){ }
+    }
+
+    playMatchStart(){
+      if (!this.sfxEnabled) return;
+      try {
+        this.matchStart.currentTime = 0;
+        this.matchStart.play().catch(()=>{});
+      } catch(_){ }
+    }
+
+    playPlayerHurt(){
+      if (!this.sfxEnabled) return;
+      try {
+        this.playerHurt.currentTime = 0;
+        this.playerHurt.play().catch(()=>{});
       } catch(_){ }
     }
 
@@ -1782,7 +1808,10 @@ class TileMap {
             audio?.sfxBoom();
             fx?.burstTank(t.x + t.w/2, t.y + t.h/2);
           } else {
-            if (t.faction === "player") audio?.sfxPlayerHit();
+            if (t.faction === "player") {
+              audio?.sfxPlayerHit();
+              audio?.playPlayerHurt();
+            }
             else audio?.sfxHit();
           }
           return;
@@ -2112,6 +2141,21 @@ fire(bullets, audio, aimTarget, fx){
     }
   }
 
+  // Boss Tank - Red, 5 HP, 1.15x fire rate
+  class BossEnemy extends Enemy {
+    constructor(x, y) {
+      super(x, y);
+      this.faction = "enemy";
+      this.color = "#ef4444"; // Red color for boss
+      this.speed = 85; // Slightly slower than normal enemies
+      this.maxHp = 5;
+      this.hp = 5;
+      // Fire rate is 1.15x of player (player: 0.31, so boss: 0.31/1.15 ≈ 0.27)
+      this.fireRate = 0.27;
+      this.isBoss = true; // Flag to identify boss
+    }
+  }
+
   class Input {
     constructor(){
       this.axisX = 0;
@@ -2216,6 +2260,7 @@ fire(bullets, audio, aimTarget, fx){
       this.statusEl = document.getElementById("status");
       this.hpEl = document.getElementById("hp");
       this.hpMaxEl = document.getElementById("hpMax");
+      this.survivalEl = document.getElementById("survival");
 
       this.tSec = 0;
       this.reset();
@@ -2249,7 +2294,12 @@ fire(bullets, audio, aimTarget, fx){
       this.maxEnemies = (this.levelId===2 ? 6 : (this.levelId===3 ? 5 : 4));
       this.score=0;
       this.gameOver=false;
+      this.gameWon=false;
       this.paused=false;
+      // Boss spawn timer - spawns after 60 seconds
+      this.bossSpawnTimer = 0;
+      this.bossSpawnDelay = 60; // 60 seconds to spawn boss
+      this.bossSpawned = false;
       // Aim-assist (auto lock nearest enemy in sight every 2s)
       this.aimLockInterval = 2.0;
       this.aimLockTimer = 999;
@@ -2296,10 +2346,13 @@ fire(bullets, audio, aimTarget, fx){
 updateHUD(){
       this.scoreEl.textContent = String(this.score);
       this.enemiesEl.textContent = String(this.enemies.filter(e=>e.alive).length);
-      this.statusEl.textContent = this.gameOver ? "失败" : (this.paused ? "暂停" : "运行中");
+      this.statusEl.textContent = this.gameOver ? (this.gameWon ? "胜利" : "失败") : (this.paused ? "暂停" : "运行中");
       if (this.player){
         this.hpEl.textContent = String(Math.max(0, this.player.hp|0));
         this.hpMaxEl.textContent = String(this.player.maxHp|0);
+      }
+      if (this.survivalEl){
+        this.survivalEl.textContent = String(Math.floor(this.tSec));
       }
     }
 
@@ -2309,6 +2362,16 @@ updateHUD(){
       e.angle = Math.PI/2;
       e.targetAngle = e.angle;
       this.enemies.push(e);
+    }
+
+    spawnBoss(){
+      if (this.bossSpawned) return; // Only spawn one boss
+      const sp = this.getSpawnPoints();
+      const boss = new BossEnemy(sp.enemy.x, sp.enemy.y);
+      boss.angle = Math.PI/2;
+      boss.targetAngle = boss.angle;
+      this.enemies.push(boss);
+      this.bossSpawned = true;
     }
 
 
@@ -2384,6 +2447,12 @@ updateHUD(){
       if (this.input.restartPressed) { this.reset(); return; }
       if (this.gameOver) return;
 
+      // Boss spawn timer - spawn boss after 60 seconds
+      this.bossSpawnTimer += dt;
+      if (this.bossSpawnTimer >= this.bossSpawnDelay && !this.bossSpawned) {
+        this.spawnBoss();
+      }
+
       this.spawnTimer += dt;
       const alive = this.enemies.filter(e=>e.alive);
       if (this.spawnTimer >= this.spawnInterval && alive.length < this.maxEnemies){
@@ -2401,6 +2470,9 @@ updateHUD(){
       for (const b of this.bullets) b.update(dt, this.map, tanks, this.audio, this.fx);
       this.bullets = this.bullets.filter(b=>b.alive);
 
+      // Check if boss is killed
+      const bossKilled = this.bossSpawned && !alive.some(e=>e.isBoss);
+      
       for (const e of this.enemies){
         if (!e._counted && !e.alive){
           e._counted = true;
@@ -2410,9 +2482,15 @@ updateHUD(){
       }
       this.enemies = this.enemies.filter(e => e.alive || (e._counted && Math.random() < 0.997));
 
+      // Victory condition: survived > 2 minutes (120s) AND boss is killed
+      const survivedTime = this.tSec;
       if (!this.player.alive){
         this.gameOver = true;
         this.fx.burstTank(this.player.x + this.player.w/2, this.player.y + this.player.h/2);
+      } else if (bossKilled && survivedTime >= 120) {
+        // Win condition met
+        this.gameOver = true;
+        this.gameWon = true;
       }
 
       this.updateHUD();
@@ -2530,10 +2608,20 @@ ctx.restore();
         ctx.fillStyle = "#ffffff";
         ctx.font = "900 30px system-ui, sans-serif";
         ctx.textAlign="center";
-        ctx.fillText("游戏失败", CANVAS_SIZE/2, CANVAS_SIZE/2 - 10);
-        ctx.font = "14px system-ui, sans-serif";
+        
+        if (this.gameWon) {
+          ctx.fillText("游戏胜利", CANVAS_SIZE/2, CANVAS_SIZE/2 - 35);
+          ctx.fillStyle = "#4ade80";
+          ctx.font = "900 18px system-ui, sans-serif";
+          ctx.fillText("任务完成！", CANVAS_SIZE/2, CANVAS_SIZE/2 - 8);
+        } else {
+          ctx.fillText("游戏失败", CANVAS_SIZE/2, CANVAS_SIZE/2 - 10);
+        }
+        
         ctx.fillStyle = "rgba(255,255,255,0.9)";
-        ctx.fillText("按 R 或 点击重开", CANVAS_SIZE/2, CANVAS_SIZE/2 + 22);
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillText(`生存时间: ${this.tSec.toFixed(1)}秒`, CANVAS_SIZE/2, CANVAS_SIZE/2 + 22);
+        ctx.fillText("按 R 或 点击重开", CANVAS_SIZE/2, CANVAS_SIZE/2 + 48);
       }
 
       if (!this.gameOver && this.paused){
@@ -2633,6 +2721,8 @@ ctx.restore();
   async function start(){
     overlay.style.display = "none";
     await game.audio.unlock();
+    // Play match start sound
+    game.audio.playMatchStart();
   }
   startBtn.addEventListener("click", start);
   canvas.addEventListener("pointerdown", () => { if (overlay.style.display !== "none") start(); }, {passive:true});
@@ -2675,3 +2765,4 @@ ctx.restore();
 </script>
 </body>
 </html>
+
