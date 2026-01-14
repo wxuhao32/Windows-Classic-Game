@@ -104,7 +104,7 @@
       border: 1px solid rgba(255,255,255,0.12);
       background:#0f1624;
       box-shadow: 0 18px 60px rgba(0,0,0,0.48);
-      image-rendering: pixelated;
+      image-rendering: auto;
       touch-action:none;
     }
 
@@ -434,6 +434,40 @@ const CANVAS_SIZE = 512;
   }
   function rand(a, b) { return a + Math.random() * (b - a); }
 
+  // --- small drawing helpers (for modern flat + depth) ---
+  function rrPath(ctx, x, y, w, h, r){
+    r = Math.max(0, Math.min(r, w/2, h/2));
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function hexToRgb(hex){
+    const h = (hex||"").replace("#","");
+    if (h.length === 3){
+      const r = parseInt(h[0]+h[0],16), g=parseInt(h[1]+h[1],16), b=parseInt(h[2]+h[2],16);
+      return {r,g,b};
+    }
+    if (h.length === 6){
+      const r = parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+      return {r,g,b};
+    }
+    return {r:180,g:180,b:180};
+  }
+  function rgbCss({r,g,b}, a=1){ return `rgba(${r|0},${g|0},${b|0},${a})`; }
+  function mixRgb(a,b,t){ return {r: a.r+(b.r-a.r)*t, g:a.g+(b.g-a.g)*t, b:a.b+(b.b-a.b)*t}; }
+  function lighten(hex, t){
+    const c = hexToRgb(hex), w={r:255,g:255,b:255};
+    return rgbCss(mixRgb(c,w,t), 1);
+  }
+  function darken(hex, t){
+    const c = hexToRgb(hex), k={r:0,g:0,b:0};
+    return rgbCss(mixRgb(c,k,t), 1);
+  }
+
   class AudioManager {
     constructor() {
       // Separate toggles: BGM and SFX
@@ -598,59 +632,141 @@ const CANVAS_SIZE = 512;
     }
   }
 
+  
   class Particle {
-    constructor(x, y, vx, vy, life, size, kind) {
+    constructor(x, y, vx, vy, life, size, kind, color=null, extra=null) {
       this.x=x; this.y=y;
       this.vx=vx; this.vy=vy;
       this.life=life; this.maxLife=life;
       this.size=size;
       this.kind=kind;
-      this.rot = rand(0, Math.PI*2);
+      this.color=color;
+      this.extra=extra;
+
+      this.rot = (extra && typeof extra.rot === "number") ? extra.rot : rand(0, Math.PI*2);
       this.vr = rand(-6, 6);
     }
     update(dt) {
       this.life -= dt;
       if (this.life <= 0) return false;
-      this.vx *= Math.pow(0.12, dt);
-      this.vy = this.vy * Math.pow(0.12, dt) + 260*dt;
+
+      // Damped motion; light gravity for debris/smoke only.
+      const damp = Math.pow(0.10, dt);
+      this.vx *= damp;
+      this.vy *= damp;
+
+      if (this.kind === "debris" || this.kind === "smoke") {
+        this.vy += 260*dt;
+      }
+
       this.x += this.vx * dt;
       this.y += this.vy * dt;
       this.rot += this.vr * dt;
       return true;
     }
     draw(ctx) {
-      const t = clamp(1 - this.life / this.maxLife, 0, 1);
+      const t = clamp(1 - this.life / this.maxLife, 0, 1); // 0->1
       const a = (1 - t);
+
       ctx.save();
       ctx.translate(this.x, this.y);
-      ctx.rotate(this.rot);
+
+      // Some particles are directional (muzzle flash)
+      if (this.kind === "muzzle") ctx.rotate((this.extra && this.extra.rot) || 0);
+      else ctx.rotate(this.rot);
 
       if (this.kind === "debris") {
-        ctx.globalAlpha = 0.9 * a;
-        ctx.fillStyle = (t < 0.4) ? "rgba(210,120,70,1)" : "rgba(120,65,45,1)";
-        ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
-      } else if (this.kind === "spark") {
         ctx.globalAlpha = 0.95 * a;
-        ctx.fillStyle = "rgba(250,220,90,1)";
-        ctx.fillRect(-this.size/2, -1, this.size, 2);
-      } else if (this.kind === "smoke") {
-        ctx.globalAlpha = 0.22 * a;
-        ctx.fillStyle = "rgba(200,210,230,1)";
+        const c0 = (this.color || "rgba(210,120,70,1)");
+        ctx.fillStyle = c0;
+        ctx.shadowColor = "rgba(0,0,0,0.35)";
+        ctx.shadowBlur = 4;
+        ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
+        ctx.shadowBlur = 0;
+
+      } else if (this.kind === "spark") {
+        // bright spark streak (additive)
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.85 * a;
+        const len = this.size * (1.2 + t*1.6);
+        const grad = ctx.createLinearGradient(-len/2, 0, len/2, 0);
+        grad.addColorStop(0, "rgba(255,255,255,0)");
+        grad.addColorStop(0.45, this.color || "rgba(250,220,90,1)");
+        grad.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2.2;
+        ctx.lineCap = "round";
+        ctx.shadowColor = this.color || "rgba(250,220,90,1)";
+        ctx.shadowBlur = 10;
         ctx.beginPath();
-        ctx.arc(0, 0, this.size*(1+t*1.6), 0, Math.PI*2);
-        ctx.fill();
-      } else if (this.kind === "ring") {
-        ctx.globalAlpha = 0.22 * a;
-        ctx.strokeStyle = "rgba(255,255,255,1)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, this.size*(1+t*2.6), 0, Math.PI*2);
+        ctx.moveTo(-len/2, 0);
+        ctx.lineTo(len/2, 0);
         ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.globalCompositeOperation = "source-over";
+
+      } else if (this.kind === "smoke") {
+        // soft smoke puff
+        ctx.globalAlpha = 0.18 * a;
+        const r = this.size*(1 + t*2.1);
+        const g = ctx.createRadialGradient(0, 0, r*0.1, 0, 0, r);
+        g.addColorStop(0, "rgba(255,255,255,0.35)");
+        g.addColorStop(1, "rgba(200,210,230,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI*2);
+        ctx.fill();
+
+      } else if (this.kind === "ring") {
+        // shock ring
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.16 * a;
+        const r = this.size*(1 + t*3.0);
+        ctx.strokeStyle = this.color || "rgba(255,255,255,1)";
+        ctx.lineWidth = 2.2;
+        ctx.shadowColor = this.color || "rgba(255,255,255,1)";
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.globalCompositeOperation = "source-over";
+
+      } else if (this.kind === "muzzle") {
+        // muzzle flash cone + core
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.85 * a;
+
+        const col = this.color || "rgba(246,224,94,1)";
+        const L = this.size * (1.6 + t*0.2);
+        const W = this.size * (0.65 + t*0.15);
+
+        // cone
+        const cg = ctx.createLinearGradient(0, 0, L, 0);
+        cg.addColorStop(0, "rgba(255,255,255,0.95)");
+        cg.addColorStop(0.3, col);
+        cg.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = cg;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(L, W);
+        ctx.lineTo(L, -W);
+        ctx.closePath();
+        ctx.fill();
+
+        // core
+        ctx.fillStyle = "rgba(255,255,255,0.75)";
+        ctx.beginPath();
+        ctx.arc(0, 0, this.size*0.55, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.globalCompositeOperation = "source-over";
       }
 
       ctx.restore();
     }
   }
+
 
   class FX {
     constructor() {
@@ -659,66 +775,117 @@ const CANVAS_SIZE = 512;
       this.shake = 0;
       this.shakeX = 0;
       this.shakeY = 0;
+
+      this._muzzleCooldown = 0;
     }
     update(dt) {
       this.particles = this.particles.filter(p => p.update(dt));
-      this.flash = Math.max(0, this.flash - dt * 2.5);
-      this.shake = Math.max(0, this.shake - dt * 2.2);
+      this.flash = Math.max(0, this.flash - dt * 2.6);
+      this.shake = Math.max(0, this.shake - dt * 2.1);
+
+      // slightly smoother shake
       const s = this.shake;
-      this.shakeX = (Math.random()*2-1) * 6 * s;
-      this.shakeY = (Math.random()*2-1) * 6 * s;
+      this.shakeX = (Math.random()*2-1) * 5.5 * s;
+      this.shakeY = (Math.random()*2-1) * 5.5 * s;
+
+      this._muzzleCooldown = Math.max(0, this._muzzleCooldown - dt);
     }
     draw(ctx) { for (const p of this.particles) p.draw(ctx); }
 
-    burstBrick(x, y) {
-      for (let i=0;i<14;i++) {
+    muzzleFlash(x, y, angle, faction="player") {
+      // keep it subtle; avoid particle spam on high ROF
+      if (this._muzzleCooldown > 0) return;
+      this._muzzleCooldown = 0.012;
+
+      const col = (faction === "player") ? "rgba(246,224,94,1)" : "rgba(255,120,120,1)";
+      this.particles.push(new Particle(
+        x, y, 0, 0,
+        0.075, 10,
+        "muzzle",
+        col,
+        {rot: angle}
+      ));
+
+      // micro sparks forward
+      for (let i=0;i<4;i++){
+        const a = angle + rand(-0.25, 0.25);
+        const sp = rand(220, 420);
         this.particles.push(new Particle(
-          x + rand(-5,5), y + rand(-5,5),
-          rand(-220,220), rand(-240,40),
-          rand(0.25, 0.55),
-          rand(2,3),
-          "debris"
+          x + Math.cos(a)*6, y + Math.sin(a)*6,
+          Math.cos(a)*sp, Math.sin(a)*sp,
+          rand(0.08, 0.16),
+          rand(4, 7),
+          "spark",
+          col
         ));
       }
-      for (let i=0;i<8;i++) {
-        this.particles.push(new Particle(
-          x + rand(-3,3), y + rand(-3,3),
-          rand(-260,260), rand(-260,0),
-          rand(0.12, 0.22),
-          rand(3,6),
-          "spark"
-        ));
-      }
-      this.flash = Math.min(1, this.flash + 0.28);
-      this.shake = Math.min(1, this.shake + 0.22);
+
+      this.flash = Math.min(1, this.flash + 0.05);
+      this.shake = Math.min(1, this.shake + 0.06);
     }
 
-    burstTank(x, y) {
-      this.particles.push(new Particle(x, y, 0, 0, 0.35, 8, "ring"));
-      for (let i=0;i<26;i++) {
+    burstBrick(x, y) {
+      // debris + sparks + dust
+      for (let i=0;i<16;i++) {
         this.particles.push(new Particle(
           x + rand(-6,6), y + rand(-6,6),
-          rand(-320,320), rand(-320,160),
+          rand(-240,240), rand(-260,60),
           rand(0.22, 0.55),
-          rand(2,4),
-          (Math.random()<0.55) ? "spark" : "debris"
+          rand(2,3),
+          "debris",
+          (Math.random()<0.5) ? "rgba(200,95,70,1)" : "rgba(150,70,55,1)"
         ));
       }
       for (let i=0;i<10;i++) {
         this.particles.push(new Particle(
-          x + rand(-8,8), y + rand(-8,8),
+          x + rand(-3,3), y + rand(-3,3),
+          rand(-320,320), rand(-320,0),
+          rand(0.10, 0.22),
+          rand(4,7),
+          "spark",
+          "rgba(250,220,90,1)"
+        ));
+      }
+      for (let i=0;i<6;i++) {
+        this.particles.push(new Particle(
+          x + rand(-6,6), y + rand(-6,6),
           rand(-40,40), rand(-140,-20),
-          rand(0.35, 0.8),
+          rand(0.30, 0.60),
           rand(3,6),
           "smoke"
         ));
       }
+      this.flash = Math.min(1, this.flash + 0.22);
+      this.shake = Math.min(1, this.shake + 0.20);
+    }
+
+    burstTank(x, y) {
+      this.particles.push(new Particle(x, y, 0, 0, 0.35, 9, "ring", "rgba(255,255,255,1)"));
+      for (let i=0;i<30;i++) {
+        this.particles.push(new Particle(
+          x + rand(-7,7), y + rand(-7,7),
+          rand(-360,360), rand(-360,180),
+          rand(0.20, 0.60),
+          rand(2,4),
+          (Math.random()<0.55) ? "spark" : "debris",
+          (Math.random()<0.55) ? "rgba(255,210,90,1)" : "rgba(170,80,60,1)"
+        ));
+      }
+      for (let i=0;i<12;i++) {
+        this.particles.push(new Particle(
+          x + rand(-10,10), y + rand(-10,10),
+          rand(-60,60), rand(-170,-30),
+          rand(0.35, 0.95),
+          rand(4,7),
+          "smoke"
+        ));
+      }
       this.flash = Math.min(1, this.flash + 0.55);
-      this.shake = Math.min(1, this.shake + 0.55);
+      this.shake = Math.min(1, this.shake + 0.60);
     }
   }
 
-  class TileMap {
+class TileMap {
     constructor(w, h) {
       this.w=w; this.h=h;
       this.tiles = new Uint8Array(w*h);
@@ -732,6 +899,28 @@ const CANVAS_SIZE = 512;
         p: Math.random()*Math.PI*2,
         s: 0.02 + Math.random()*0.05,
       }));
+
+
+      // Subtle noise texture (makes flat colors feel more modern, without assets)
+      this._noiseCanvas = document.createElement("canvas");
+      this._noiseCanvas.width = 96;
+      this._noiseCanvas.height = 96;
+      const nctx = this._noiseCanvas.getContext("2d");
+      const img = nctx.createImageData(this._noiseCanvas.width, this._noiseCanvas.height);
+      for (let i=0;i<img.data.length;i+=4){
+        const v = (Math.random()*255)|0;
+        img.data[i]   = v;
+        img.data[i+1] = v;
+        img.data[i+2] = v;
+        img.data[i+3] = 18; // low alpha
+      }
+      nctx.putImageData(img, 0, 0);
+      // a few larger speckles for texture
+      nctx.fillStyle = "rgba(255,255,255,0.04)";
+      for (let i=0;i<90;i++){
+        nctx.fillRect(Math.random()*96, Math.random()*96, 1, 1);
+      }
+      this._noisePattern = null;
     }
     idx(x,y){ return y*this.w+x; }
     inBounds(x,y){ return x>=0&&y>=0&&x<this.w&&y<this.h; }
@@ -840,6 +1029,17 @@ const CANVAS_SIZE = 512;
       g.addColorStop(1, "#0b1220");
       ctx.fillStyle = g;
       ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+
+      // subtle noise overlay (one-time pattern)
+      if (!this._noisePattern && this._noiseCanvas){
+        try { this._noisePattern = ctx.createPattern(this._noiseCanvas, "repeat"); } catch(_) { this._noisePattern = null; }
+      }
+      if (this._noisePattern){
+        ctx.globalAlpha = 0.10;
+        ctx.fillStyle = this._noisePattern;
+        ctx.fillRect(0,0,this.w*TILE_SIZE,this.h*TILE_SIZE);
+        ctx.globalAlpha = 1;
+      }
 
       // subtle star field (stable positions; animated alpha)
       ctx.fillStyle = "rgba(255,255,255,1)";
@@ -1002,17 +1202,46 @@ const CANVAS_SIZE = 512;
 
     draw(ctx) {
       if (!this.alive) return;
-      ctx.globalAlpha = 0.22;
-      ctx.strokeStyle = (this.owner==="player") ? "rgba(246,224,94,1)" : "rgba(255,107,107,1)";
-      ctx.lineWidth = 3;
+
+      const col = (this.owner==="player") ? "rgba(246,224,94,1)" : "rgba(255,107,107,1)";
+
+      // tracer + glow (modern punch)
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+
+      const grad = ctx.createLinearGradient(this.tx, this.ty, this.x, this.y);
+      grad.addColorStop(0, "rgba(255,255,255,0)");
+      grad.addColorStop(0.35, col.replace("1)", "0.25)"));
+      grad.addColorStop(1, col.replace("1)", "0.85)"));
+
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = "round";
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 14;
       ctx.beginPath();
       ctx.moveTo(this.tx, this.ty);
       ctx.lineTo(this.x, this.y);
       ctx.stroke();
-      ctx.globalAlpha = 1;
 
-      ctx.fillStyle = (this.owner==="player") ? "#f6e05e" : "#ff6b6b";
-      ctx.fillRect((this.x-this.r)|0, (this.y-this.r)|0, this.r*2, this.r*2);
+      // core
+      ctx.shadowBlur = 18;
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 3.2, 0, Math.PI*2);
+      ctx.fill();
+
+      // hot center
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = "rgba(255,255,255,1)";
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 1.4, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.restore();
+
     }
   }
 
@@ -1044,7 +1273,8 @@ const CANVAS_SIZE = 512;
 
     canFire(){ return this.fireCooldown<=0; }
 
-    fire(bullets, audio){
+    
+fire(bullets, audio, fx){
       if (!this.canFire() || !this.alive) return;
       this.fireCooldown = this.fireRate;
       const cx=this.x+this.w/2, cy=this.y+this.h/2;
@@ -1052,9 +1282,8 @@ const CANVAS_SIZE = 512;
       const off=10;
       bullets.push(new Bullet(this.faction, cx+vx*off, cy+vy*off, vx, vy));
       audio?.sfxShoot();
-    }
-
-    tryMove(dt, map, vx, vy){
+      fx?.muzzleFlash(cx+vx*(off+2), cy+vy*(off+2), this.angle, this.faction);
+    }tryMove(dt, map, vx, vy){
       const nx=this.x + vx*this.speed*dt;
       if (!map.collidesRect(nx, this.y, this.w, this.h)) this.x = nx;
       const ny=this.y + vy*this.speed*dt;
@@ -1066,44 +1295,110 @@ const CANVAS_SIZE = 512;
     draw(ctx){
       if (!this.alive) return;
       const cx=this.x+this.w/2, cy=this.y+this.h/2;
+
+      const base = this.color;
+      const cLight = lighten(base, 0.26);
+      const cMid = base;
+      const cDark = darken(base, 0.38);
+
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(this.angle);
 
-      ctx.globalAlpha = 0.25;
-      ctx.fillStyle = "rgba(0,0,0,1)";
-      ctx.fillRect(-this.w/2 + 1.2, -this.h/2 + 2.0, this.w, this.h);
-      ctx.globalAlpha = 1;
+      // ground shadow (elliptical)
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.scale(1.05, 0.75);
+      ctx.beginPath();
+      ctx.arc(0, 4.2, this.w*0.58, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
 
-      const g = ctx.createLinearGradient(-this.w/2, -this.h/2, this.w/2, this.h/2);
-      g.addColorStop(0, this.color);
-      g.addColorStop(1, "rgba(0,0,0,0.2)");
-      ctx.fillStyle = g;
-      ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+      const bw = this.w, bh = this.h;
+      const r = 3.6;
 
-      ctx.fillStyle = "rgba(0,0,0,0.28)";
-      ctx.fillRect(-this.w/2 + 1, -this.h/2 + 1, 2, this.h-2);
-      ctx.fillRect(this.w/2 - 3, -this.h/2 + 1, 2, this.h-2);
+      // tracks
+      const trackW = 3.4;
+      ctx.fillStyle = "rgba(7,10,16,0.85)";
+      rrPath(ctx, -bw/2-0.2, -bh/2+0.8, trackW, bh-1.6, 1.4); ctx.fill();
+      rrPath(ctx,  bw/2-trackW+0.2, -bh/2+0.8, trackW, bh-1.6, 1.4); ctx.fill();
 
-      ctx.fillStyle = "rgba(255,255,255,0.16)";
-      ctx.fillRect(-3, -3, 6, 6);
-
-      ctx.fillStyle = "#0b1020";
-      ctx.fillRect(0, -1, 10, 2);
-
-      ctx.globalAlpha = 0.20;
+      // tread notches
+      ctx.globalAlpha = 0.18;
       ctx.fillStyle = "rgba(255,255,255,1)";
-      ctx.fillRect(-this.w/2 + 1, -this.h/2 + 1, this.w-2, 1);
+      for (let i=-5; i<=5; i+=3){
+        ctx.fillRect(-bw/2+0.7, i, 1.2, 1.2);
+        ctx.fillRect( bw/2-1.9, i, 1.2, 1.2);
+      }
       ctx.globalAlpha = 1;
 
-      ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      ctx.strokeRect(-this.w/2 + 0.5, -this.h/2 + 0.5, this.w, this.h);
+      // chassis
+      const g = ctx.createLinearGradient(-bw/2, -bh/2, bw/2, bh/2);
+      g.addColorStop(0, cLight);
+      g.addColorStop(0.55, cMid);
+      g.addColorStop(1, cDark);
 
+      ctx.shadowColor = "rgba(0,0,0,0.45)";
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 2;
+      ctx.fillStyle = g;
+      rrPath(ctx, -bw/2+1.2, -bh/2, bw-2.4, bh, r);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      // subtle top highlight
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "rgba(255,255,255,1)";
+      rrPath(ctx, -bw/2+2.0, -bh/2+1.0, bw-4.0, 3.0, 2.0);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // turret base
+      ctx.fillStyle = cMid;
+      ctx.beginPath();
+      ctx.arc(0, 0, 5.2, 0, Math.PI*2);
+      ctx.fill();
+
+      const tg = ctx.createRadialGradient(-2, -2, 1, 0, 0, 7);
+      tg.addColorStop(0, "rgba(255,255,255,0.22)");
+      tg.addColorStop(1, "rgba(0,0,0,0.28)");
+      ctx.fillStyle = tg;
+      ctx.beginPath();
+      ctx.arc(0, 0, 5.2, 0, Math.PI*2);
+      ctx.fill();
+
+      // barrel
+      const bg = ctx.createLinearGradient(0, -2, 14, 2);
+      bg.addColorStop(0, "rgba(12,16,28,0.98)");
+      bg.addColorStop(1, "rgba(0,0,0,0.55)");
+      ctx.fillStyle = bg;
+      rrPath(ctx, 2.6, -1.7, 12.0, 3.4, 1.5);
+      ctx.fill();
+
+      // barrel tip shine
+      ctx.fillStyle = "rgba(255,255,255,0.16)";
+      rrPath(ctx, 13.0, -1.3, 2.0, 2.6, 1.0);
+      ctx.fill();
+
+      // outline
+      ctx.strokeStyle = "rgba(0,0,0,0.40)";
+      ctx.lineWidth = 1.2;
+      rrPath(ctx, -bw/2+1.2, -bh/2, bw-2.4, bh, r);
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,5.2,0,Math.PI*2); ctx.stroke();
+
+      // hit flash
       if (this.hitFlash > 0) {
-        ctx.globalAlpha = 0.35 * this.hitFlash;
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.32 * this.hitFlash;
         ctx.fillStyle = "rgba(255,255,255,1)";
-        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        rrPath(ctx, -bw/2+1.2, -bh/2, bw-2.4, bh, r);
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,5.2,0,Math.PI*2); ctx.fill();
         ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
       }
 
       ctx.restore();
@@ -1119,7 +1414,8 @@ const CANVAS_SIZE = 512;
       this.hp = this.maxHp;
     }
 
-    fire(bullets, audio, aimTarget){
+    
+fire(bullets, audio, aimTarget, fx){
       if (!this.canFire() || !this.alive) return;
 
       // If aim-assist target exists, shoot towards it (with a homing bullet for "press to hit" feel)
@@ -1147,9 +1443,9 @@ const CANVAS_SIZE = 512;
       const off=10;
       bullets.push(new Bullet(this.faction, cx+vx*off, cy+vy*off, vx, vy, target));
       audio?.sfxShoot();
-    }
 
-    handleInput(dt, map, input, bullets, audio, aimTarget){
+      fx?.muzzleFlash(cx+vx*(off+2), cy+vy*(off+2), Math.atan2(vy, vx), this.faction);
+    }handleInput(dt, map, input, bullets, audio, aimTarget, fx){
       if (!this.alive) return;
 
       let vx=input.axisX, vy=input.axisY;
@@ -1170,7 +1466,7 @@ const CANVAS_SIZE = 512;
         }
       }
 
-      if (input.firePressed) this.fire(bullets, audio, aimTarget);
+      if (input.firePressed) this.fire(bullets, audio, aimTarget, fx);
     }
   }
 
@@ -1183,7 +1479,7 @@ const CANVAS_SIZE = 512;
       this.changeInterval=0.55+Math.random()*0.9;
       this.moveAngle=Math.PI/2;
     }
-    updateAI(dt, map, player, bullets, audio){
+    updateAI(dt, map, player, bullets, audio, fx){
       if (!this.alive) return;
       this.update(dt);
 
@@ -1221,7 +1517,7 @@ const CANVAS_SIZE = 512;
       if (canSee && this.canFire() && Math.random() < p*(dt*60)){
         this.targetAngle = toP;
         this.angle = angleLerp(this.angle, this.targetAngle, 0.8);
-        this.fire(bullets, audio);
+        this.fire(bullets, audio, fx);
       }
     }
   }
@@ -1481,9 +1777,9 @@ updateHUD(){
 
       this.player.update(dt);
       this.updateAimAssist(dt);
-      this.player.handleInput(dt, this.map, this.input, this.bullets, this.audio, this.aimTarget);
+      this.player.handleInput(dt, this.map, this.input, this.bullets, this.audio, this.aimTarget, this.fx);
 
-      for (const e of this.enemies) e.updateAI(dt, this.map, this.player, this.bullets, this.audio);
+      for (const e of this.enemies) e.updateAI(dt, this.map, this.player, this.bullets, this.audio, this.fx);
 
       const tanks = [this.player, ...this.enemies];
       for (const b of this.bullets) b.update(dt, this.map, tanks, this.audio, this.fx);
@@ -1526,38 +1822,68 @@ updateHUD(){
         if (dx*dx + dy*dy <= VISION_RADIUS_SQ) e.draw(ctx);
       }
 
-      // Aim-assist reticle: show where the auto-lock is (within vision range)
-      if (this.aimTarget && this.aimTarget.alive){
-        const ecx = this.aimTarget.x + this.aimTarget.w/2;
-        const ecy = this.aimTarget.y + this.aimTarget.h/2;
-        const dx = ecx - pcx;
-        const dy = ecy - pcy;
-        if (dx*dx + dy*dy <= VISION_RADIUS_SQ){
-          ctx.save();
-          ctx.globalAlpha = 0.95;
-          // Outer ring
-          ctx.strokeStyle = "rgba(255,255,255,0.82)";
-          ctx.lineWidth = 2;
-          const r = 7;
-          ctx.beginPath();
-          ctx.arc(ecx, ecy, r, 0, Math.PI*2);
-          ctx.stroke();
-          // Cross ticks
-          ctx.strokeStyle = "rgba(255,90,90,0.95)";
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(ecx - r - 4, ecy); ctx.lineTo(ecx - r + 1, ecy);
-          ctx.moveTo(ecx + r - 1, ecy); ctx.lineTo(ecx + r + 4, ecy);
-          ctx.moveTo(ecx, ecy - r - 4); ctx.lineTo(ecx, ecy - r + 1);
-          ctx.moveTo(ecx, ecy + r - 1); ctx.lineTo(ecx, ecy + r + 4);
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
 
-      for (const b of this.bullets) b.draw(ctx);
+// Aim-assist reticle: show where the auto-lock is (within vision range)
+if (this.aimTarget && this.aimTarget.alive){
+  const ecx = this.aimTarget.x + this.aimTarget.w/2;
+  const ecy = this.aimTarget.y + this.aimTarget.h/2;
+  const dx = ecx - pcx;
+  const dy = ecy - pcy;
+  if (dx*dx + dy*dy <= VISION_RADIUS_SQ){
+    const pulse = 0.5 + 0.5*Math.sin(this.tSec*5.2);
+    const r = 7.5 + pulse*0.8;
 
-      // Vision circle (helps players feel the sight range)
+    ctx.save();
+    ctx.translate(ecx, ecy);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.rotate(this.tSec*0.9);
+
+    // soft glow ring
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = `rgba(255,90,90,${0.12 + pulse*0.10})`;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI*2);
+    ctx.stroke();
+
+    // crisp ring
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.88)";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "rgba(255,90,90,1)";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // ticks
+    ctx.strokeStyle = "rgba(255,90,90,0.98)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-r-4, 0); ctx.lineTo(-r+1, 0);
+    ctx.moveTo( r-1, 0); ctx.lineTo( r+4, 0);
+    ctx.moveTo(0, -r-4); ctx.lineTo(0, -r+1);
+    ctx.moveTo(0,  r-1); ctx.lineTo(0,  r+4);
+    ctx.stroke();
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.restore();
+  }
+}
+
+for (const b of this.bullets) b.draw(ctx);
+
+// Ambient spotlight: makes the scene feel deeper and more modern
+ctx.save();
+const fog = ctx.createRadialGradient(pcx, pcy, VISION_RADIUS*0.35, pcx, pcy, VISION_RADIUS*1.85);
+fog.addColorStop(0, "rgba(0,0,0,0)");
+fog.addColorStop(1, "rgba(0,0,0,0.42)");
+ctx.fillStyle = fog;
+ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+ctx.restore();
+
+// Vision circle (helps players feel the sight range)
       ctx.save();
       ctx.globalAlpha = 0.55;
       ctx.strokeStyle = "rgba(255,255,255,0.16)";
