@@ -22,6 +22,8 @@
     // ✅ 坦克大战（独立静态站点，通过 wrapper 打开）
     "tankBattle": { title: "坦克大战（2000）", src: "../games/tank-battle/index.html", icon: "./assets/icon-tank.svg" },
 
+    // ✅ 飞机大战（Vite 构建产物，静态可运行）
+    "feiji2": { title: "飞机大战", src: "../games/feiji2/index.html", icon: "./assets/icon-feiji.svg" },
 
     "tetris": { title: "俄罗斯方块", src: "../games/tetris/index.html", icon: "./assets/icon-tetris.svg" },
     "solitaire": { title: "纸牌接龙", src: "../games/solitaire/index.html", icon: "./assets/icon-solitaire.svg" },
