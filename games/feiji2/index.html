@@ -12,6 +12,38 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
       user-select: none;
     }
+    html, body, #root {
+      height: 100%;
+      width: 100%;
+    }
+
+    /* Minimal "Tailwind-like" utilities that this build relies on for layout.
+       (We removed Tailwind CDN to keep it deployable offline, so we re-add only
+       what is needed for responsive sizing on desktop/mobile.) */
+    .w-full { width: 100%; }
+    .h-full { height: 100%; }
+    .h-screen { height: 100vh; height: 100dvh; }
+    .max-w-full { max-width: 100%; }
+    .relative { position: relative; }
+    .absolute { position: absolute; }
+    .inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
+    .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .items-center { align-items: center; }
+    .items-start { align-items: flex-start; }
+    .items-end { align-items: flex-end; }
+    .justify-center { justify-content: center; }
+    .justify-between { justify-content: space-between; }
+    .overflow-hidden { overflow: hidden; }
+    .pointer-events-none { pointer-events: none; }
+    .pointer-events-auto { pointer-events: auto; }
+    .select-none { user-select: none; }
+    .touch-none { touch-action: none; }
+    .aspect-\[9\/16\] { aspect-ratio: 9 / 16; }
+
+    /* Make the actual game viewport scale cleanly across devices */
+    #root > div { min-height: 100dvh; }
+    canvas.w-full.h-full { width: 100%; height: 100%; }
     canvas {
       display: block;
       image-rendering: pixelated;
